@@ -1,0 +1,97 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  name      String
+  email     String   @unique
+  password  String
+  role      Role     @default(USER)
+  active    Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  sales     Sale[]
+  financialTransactions FinancialTransaction[] @relation("UserFinancialTransactions")
+}
+
+model Product {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  price       Decimal  @db.Decimal(10,2)
+  cost        Decimal  @db.Decimal(10,2)
+  stock       Int
+  category    String?
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  saleItems   SaleItem[]
+}
+
+model Sale {
+  id         String   @id @default(uuid())
+  total      Decimal  @db.Decimal(10,2)
+  payment    PaymentMethod
+  discount   Decimal? @db.Decimal(10,2)
+  tax        Decimal? @db.Decimal(10,2)
+  createdAt  DateTime @default(now())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+
+  items      SaleItem[]
+}
+
+model SaleItem {
+  id        String   @id @default(uuid())
+  saleId    String
+  productId String
+  quantity  Int
+  price     Decimal @db.Decimal(10,2)
+
+  sale      Sale     @relation(fields: [saleId], references: [id])
+  product   Product  @relation(fields: [productId], references: [id])
+}
+
+model FinancialTransaction {
+  id          String   @id @default(uuid())
+  type        TransactionType
+  amount      Decimal  @db.Decimal(10,2)
+  description String?
+  createdAt   DateTime @default(now())
+  createdById String
+  createdBy   User     @relation("UserFinancialTransactions", fields: [createdById], references: [id])
+}
+
+enum Role {
+  ADMIN
+  MODERATOR
+  USER
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  PIX
+  OTHER
+}
+
+enum TransactionType {
+  ENTRY
+  EXIT
+  SANGRIA
+  OTHER
+}

@@ -1,0 +1,21 @@
+{
+  "name": "ezpdv-backend",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node dist/main",
+    "start:dev": "nest start --watch",
+    "build": "nest build",
+    "lint": "eslint '{src,test}/**/*.ts' --fix",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:studio": "prisma studio",
+    "seed": "ts-node prisma/seed.ts"
+  },
+  "devDependencies": {
+    "prisma": "^6.13.0"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.1.5",
+    "@prisma/client": "^6.13.0"
+  }
+}

@@ -1,2 +1,3 @@
-# ezpdv-backend
+# EzPDV Backend
 
+NestJS + Prisma backend for EzPDV.
