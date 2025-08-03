@@ -1,1 +1,21 @@
-{ }
+{
+  "compilerOptions": {
+    "target": "ES2021",
+    "module": "commonjs",
+    "lib": ["ES2021", "DOM"],
+    "moduleResolution": "node",
+    "esModuleInterop": true,
+    "experimentalDecorators": true,
+    "emitDecoratorMetadata": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "resolveJsonModule": true,
+    "outDir": "./dist",
+    "baseUrl": "./src", // ✅ já estava certo
+    "paths": {
+      "*": ["*"] // ✅ ajuda a resolver erros de path relativos
+    }
+  },
+  "include": ["src/**/*"], // ✅ ESSENCIAL: garante que todos os arquivos em src serão compilados
+  "exclude": ["node_modules", "dist"]
+}
