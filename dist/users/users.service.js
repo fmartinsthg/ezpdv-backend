@@ -63,14 +63,14 @@ let UsersService = class UsersService {
     async create(data) {
         try {
             if (!data.password) {
-                throw new common_1.BadRequestException('Senha é obrigatória');
+                throw new common_1.BadRequestException("Senha é obrigatória");
             }
             const salt = await bcrypt.genSalt();
             const hashedPassword = await bcrypt.hash(data.password, salt);
             // Validação do papel
-            const role = data.role ? data.role.toUpperCase() : 'USER';
+            const role = data.role ? data.role.toUpperCase() : "USER";
             if (!Object.values(client_1.Role).includes(role)) {
-                throw new common_1.BadRequestException(`Role inválido. Valores permitidos: ${Object.values(client_1.Role).join(', ')}`);
+                throw new common_1.BadRequestException(`Role inválido. Valores permitidos: ${Object.values(client_1.Role).join(", ")}`);
             }
             return await this.prisma.user.create({
                 data: {
@@ -81,7 +81,7 @@ let UsersService = class UsersService {
             });
         }
         catch (error) {
-            throw new common_1.BadRequestException(error.message || 'Erro ao criar usuário');
+            throw new common_1.BadRequestException(error.message || "Erro ao criar usuário");
         }
     }
     async update(id, data) {

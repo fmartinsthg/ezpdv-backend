@@ -11,6 +11,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CreateProductDto = void 0;
 const class_validator_1 = require("class-validator");
+const class_transformer_1 = require("class-transformer");
 class CreateProductDto {
 }
 exports.CreateProductDto = CreateProductDto;
@@ -20,15 +21,21 @@ __decorate([
     __metadata("design:type", String)
 ], CreateProductDto.prototype, "name", void 0);
 __decorate([
+    (0, class_transformer_1.Type)(() => Number),
     (0, class_validator_1.IsNumber)(),
+    (0, class_validator_1.Min)(0, { message: 'O preço deve ser um valor positivo.' }),
     __metadata("design:type", Number)
 ], CreateProductDto.prototype, "price", void 0);
 __decorate([
+    (0, class_transformer_1.Type)(() => Number),
     (0, class_validator_1.IsNumber)(),
+    (0, class_validator_1.Min)(0, { message: 'O custo deve ser um valor positivo.' }),
     __metadata("design:type", Number)
 ], CreateProductDto.prototype, "cost", void 0);
 __decorate([
-    (0, class_validator_1.IsNumber)(),
+    (0, class_transformer_1.Type)(() => Number),
+    (0, class_validator_1.IsInt)({ message: 'O estoque deve ser um número inteiro.' }),
+    (0, class_validator_1.Min)(0, { message: 'O estoque não pode ser negativo.' }),
     __metadata("design:type", Number)
 ], CreateProductDto.prototype, "stock", void 0);
 __decorate([

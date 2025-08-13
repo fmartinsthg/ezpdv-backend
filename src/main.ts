@@ -1,6 +1,6 @@
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
-import { ValidationPipe } from "@nestjs/common";
+import { ValidationPipe, BadRequestException } from '@nestjs/common';
 import { ConfigService } from "@nestjs/config";
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
 
@@ -10,10 +10,22 @@ async function bootstrap() {
   // Habilita validações automáticas com class-validator + class-transformer
   app.useGlobalPipes(
     new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-    })
+      transform: true, 
+      whitelist: true, 
+      forbidNonWhitelisted: true, 
+      stopAtFirstError: false, 
+      exceptionFactory: (errors) => {
+        const formattedErrors = errors.map(err => {
+          return {
+            field: err.property,
+            messages: err.constraints
+              ? Object.values(err.constraints)
+              : [],
+          };
+        });
+        return new BadRequestException(formattedErrors);
+      },
+    }),
   );
 
   const configService = app.get(ConfigService);

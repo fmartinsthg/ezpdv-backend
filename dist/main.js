@@ -9,9 +9,21 @@ async function bootstrap() {
     const app = await core_1.NestFactory.create(app_module_1.AppModule);
     // Habilita validações automáticas com class-validator + class-transformer
     app.useGlobalPipes(new common_1.ValidationPipe({
+        transform: true,
         whitelist: true,
         forbidNonWhitelisted: true,
-        transform: true,
+        stopAtFirstError: false,
+        exceptionFactory: (errors) => {
+            const formattedErrors = errors.map(err => {
+                return {
+                    field: err.property,
+                    messages: err.constraints
+                        ? Object.values(err.constraints)
+                        : [],
+                };
+            });
+            return new common_1.BadRequestException(formattedErrors);
+        },
     }));
     const configService = app.get(config_1.ConfigService);
     const port = configService.get("PORT") || 3333;

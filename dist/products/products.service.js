@@ -22,7 +22,7 @@ let ProductsService = class ProductsService {
     async findOne(id) {
         const product = await this.prisma.product.findUnique({ where: { id } });
         if (!product)
-            throw new common_1.NotFoundException('Produto não encontrado');
+            throw new common_1.NotFoundException("Produto não encontrado");
         return product;
     }
     async create(data) {
