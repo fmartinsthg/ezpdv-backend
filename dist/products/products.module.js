@@ -11,7 +11,7 @@ exports.ProductsModule = void 0;
 const common_1 = require("@nestjs/common");
 const products_controller_1 = require("./products.controller");
 const products_service_1 = require("./products.service");
-const prisma_module_1 = require("../prisma/prisma.module"); // Se for usar PrismaService
+const prisma_module_1 = require("../prisma/prisma.module");
 let ProductsModule = class ProductsModule {
 };
 exports.ProductsModule = ProductsModule;
