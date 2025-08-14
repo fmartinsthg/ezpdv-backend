@@ -11,8 +11,8 @@ export class UsersService {
     return this.prisma.user.findMany();
   }
 
-  async findById(id: number) {
-    return this.prisma.user.findUnique({ where: { id: id.toString() } });
+  async findById(id: string) {
+    return this.prisma.user.findUnique({ where: { id } });
   }
 
   async findByEmail(email: string) {
@@ -47,11 +47,11 @@ export class UsersService {
     }
   }
 
-  async update(id: number, data: any) {
-    return this.prisma.user.update({ where: { id: id.toString() }, data });
+  async update(id: string, data: any) {
+    return this.prisma.user.update({ where: { id }, data });
   }
 
-  async delete(id: number) {
-    return this.prisma.user.delete({ where: { id: id.toString() } });
+  async delete(id: string) {
+    return this.prisma.user.delete({ where: { id } });
   }
 }

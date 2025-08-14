@@ -12,7 +12,7 @@ export class UsersController {
 
   @Get(':id')
   findOne(@Param('id') id: string) {
-    return this.usersService.findById(Number(id));
+    return this.usersService.findById(id);
   }
 
   @Post()
@@ -22,11 +22,11 @@ export class UsersController {
 
   @Put(':id')
   update(@Param('id') id: string, @Body() data: any) {
-    return this.usersService.update(Number(id), data);
+    return this.usersService.update(id, data);
   }
 
   @Delete(':id')
   delete(@Param('id') id: string) {
-    return this.usersService.delete(Number(id));
+    return this.usersService.delete(id);
   }
 }
