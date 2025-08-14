@@ -18,41 +18,58 @@ const products_service_1 = require("./products.service");
 const jwt_guard_1 = require("../auth/jwt.guard");
 const create_product_dto_1 = require("./dto/create-product.dto");
 const update_product_dto_1 = require("./dto/update-product.dto");
+// (Opcional, mas recomendado) – documentação
+const swagger_1 = require("@nestjs/swagger");
+// Proteção por roles (seu projeto já criou esses utilitários antes)
+const roles_decorator_1 = require("../common/decorators/roles.decorator");
+const roles_guard_1 = require("../common/guards/roles.guard");
 let ProductsController = class ProductsController {
     constructor(productsService) {
         this.productsService = productsService;
     }
     async findAll() {
-        return await this.productsService.findAll();
+        return this.productsService.findAll();
     }
     async findOne(id) {
-        return await this.productsService.findOne(id);
+        return this.productsService.findOne(id);
     }
     async create(data) {
-        return await this.productsService.create(data);
+        return this.productsService.create(data);
     }
     async update(id, data) {
-        return await this.productsService.update(id, data);
+        return this.productsService.update(id, data);
     }
     async delete(id) {
-        return await this.productsService.delete(id);
+        return this.productsService.delete(id);
     }
 };
 exports.ProductsController = ProductsController;
 __decorate([
+    (0, swagger_1.ApiOperation)({ summary: "Listar produtos" }),
+    (0, swagger_1.ApiResponse)({
+        status: 200,
+        description: "Lista de produtos retornada com sucesso.",
+    }),
     (0, common_1.Get)(),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", []),
     __metadata("design:returntype", Promise)
 ], ProductsController.prototype, "findAll", null);
 __decorate([
+    (0, swagger_1.ApiOperation)({ summary: "Obter produto por ID" }),
+    (0, swagger_1.ApiResponse)({ status: 200, description: "Produto encontrado." }),
+    (0, swagger_1.ApiResponse)({ status: 404, description: "Produto não encontrado." }),
     (0, common_1.Get)(":id"),
-    __param(0, (0, common_1.Param)("id")),
+    __param(0, (0, common_1.Param)("id", new common_1.ParseUUIDPipe())),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", Promise)
 ], ProductsController.prototype, "findOne", null);
 __decorate([
+    (0, swagger_1.ApiOperation)({ summary: "Criar produto" }),
+    (0, swagger_1.ApiResponse)({ status: 201, description: "Produto criado." }),
+    (0, swagger_1.ApiResponse)({ status: 404, description: "Categoria informada não existe." }),
+    (0, roles_decorator_1.Roles)("ADMIN", "MODERATOR"),
     (0, common_1.Post)(),
     __param(0, (0, common_1.Body)()),
     __metadata("design:type", Function),
@@ -60,22 +77,35 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], ProductsController.prototype, "create", null);
 __decorate([
+    (0, swagger_1.ApiOperation)({ summary: "Atualizar produto" }),
+    (0, swagger_1.ApiResponse)({ status: 200, description: "Produto atualizado." }),
+    (0, swagger_1.ApiResponse)({
+        status: 404,
+        description: "Produto ou categoria não encontrados.",
+    }),
+    (0, roles_decorator_1.Roles)("ADMIN", "MODERATOR"),
     (0, common_1.Patch)(":id"),
-    __param(0, (0, common_1.Param)("id")),
+    __param(0, (0, common_1.Param)("id", new common_1.ParseUUIDPipe())),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String, update_product_dto_1.UpdateProductDto]),
     __metadata("design:returntype", Promise)
 ], ProductsController.prototype, "update", null);
 __decorate([
+    (0, swagger_1.ApiOperation)({ summary: "Excluir produto" }),
+    (0, swagger_1.ApiResponse)({ status: 200, description: "Produto excluído." }),
+    (0, swagger_1.ApiResponse)({ status: 404, description: "Produto não encontrado." }),
+    (0, roles_decorator_1.Roles)("ADMIN", "MODERATOR"),
     (0, common_1.Delete)(":id"),
-    __param(0, (0, common_1.Param)("id")),
+    __param(0, (0, common_1.Param)("id", new common_1.ParseUUIDPipe())),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", Promise)
 ], ProductsController.prototype, "delete", null);
 exports.ProductsController = ProductsController = __decorate([
+    (0, swagger_1.ApiTags)("products"),
+    (0, swagger_1.ApiBearerAuth)(),
+    (0, common_1.UseGuards)(jwt_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard),
     (0, common_1.Controller)("products"),
-    (0, common_1.UseGuards)(jwt_guard_1.JwtAuthGuard),
     __metadata("design:paramtypes", [products_service_1.ProductsService])
 ], ProductsController);
