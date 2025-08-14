@@ -23,16 +23,16 @@ let UsersController = class UsersController {
         return this.usersService.findAll();
     }
     findOne(id) {
-        return this.usersService.findById(Number(id));
+        return this.usersService.findById(id);
     }
     create(data) {
         return this.usersService.create(data);
     }
     update(id, data) {
-        return this.usersService.update(Number(id), data);
+        return this.usersService.update(id, data);
     }
     delete(id) {
-        return this.usersService.delete(Number(id));
+        return this.usersService.delete(id);
     }
 };
 exports.UsersController = UsersController;

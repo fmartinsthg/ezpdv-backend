@@ -55,7 +55,7 @@ let UsersService = class UsersService {
         return this.prisma.user.findMany();
     }
     async findById(id) {
-        return this.prisma.user.findUnique({ where: { id: id.toString() } });
+        return this.prisma.user.findUnique({ where: { id } });
     }
     async findByEmail(email) {
         return this.prisma.user.findUnique({ where: { email: email.toString() } });
@@ -85,10 +85,10 @@ let UsersService = class UsersService {
         }
     }
     async update(id, data) {
-        return this.prisma.user.update({ where: { id: id.toString() }, data });
+        return this.prisma.user.update({ where: { id }, data });
     }
     async delete(id) {
-        return this.prisma.user.delete({ where: { id: id.toString() } });
+        return this.prisma.user.delete({ where: { id } });
     }
 };
 exports.UsersService = UsersService;
