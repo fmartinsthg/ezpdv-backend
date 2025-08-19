@@ -13,35 +13,36 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MembershipsController = void 0;
-// src/platform/memberships/memberships.controller.ts
 const common_1 = require("@nestjs/common");
 const jwt_guard_1 = require("../../auth/jwt.guard");
 const current_user_decorator_1 = require("../../auth/current-user.decorator");
 const memberships_service_1 = require("./memberships.service");
 const create_membership_dto_1 = require("./dto/create-membership.dto");
-const client_1 = require("@prisma/client");
 let MembershipsController = class MembershipsController {
     constructor(service) {
         this.service = service;
     }
-    resolveTenantScope(user, paramTenantId) {
+    /** Decide o tenant efetivo (SUPERADMIN pode qualquer, ADMIN só o próprio) */
+    resolveTenantScope(user, routeTenantId) {
         if (user.systemRole === 'SUPERADMIN')
-            return paramTenantId;
-        if (!user.tenantId || user.tenantId !== paramTenantId) {
+            return routeTenantId;
+        if (!user.tenantId || user.tenantId !== routeTenantId) {
             throw new common_1.ForbiddenException('Operação não permitida para este tenant.');
         }
-        if (user.role !== client_1.TenantRole.ADMIN) {
-            throw new common_1.ForbiddenException('Apenas ADMIN do tenant pode gerenciar membros.');
-        }
-        return paramTenantId;
+        return routeTenantId;
     }
-    list(user, tenantIdParam) {
+    async list(user, tenantIdParam) {
         const tenantId = this.resolveTenantScope(user, tenantIdParam);
-        return this.service.list(tenantId);
+        return this.service.list(user, tenantId);
     }
-    create(user, tenantIdParam, dto) {
+    async create(user, tenantIdParam, dto) {
         const tenantId = this.resolveTenantScope(user, tenantIdParam);
-        return this.service.create(tenantId, dto);
+        return this.service.create(user, tenantId, dto);
+    }
+    // (Opcional) Remoção de vínculo
+    async remove(user, tenantIdParam, targetUserId) {
+        const tenantId = this.resolveTenantScope(user, tenantIdParam);
+        return this.service.remove(user, tenantId, targetUserId);
     }
 };
 exports.MembershipsController = MembershipsController;
@@ -51,7 +52,7 @@ __decorate([
     __param(1, (0, common_1.Param)('tenantId', new common_1.ParseUUIDPipe())),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, String]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], MembershipsController.prototype, "list", null);
 __decorate([
     (0, common_1.Post)(),
@@ -60,8 +61,17 @@ __decorate([
     __param(2, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object, String, create_membership_dto_1.CreateMembershipDto]),
-    __metadata("design:returntype", void 0)
+    __metadata("design:returntype", Promise)
 ], MembershipsController.prototype, "create", null);
+__decorate([
+    (0, common_1.Delete)(':userId'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('tenantId', new common_1.ParseUUIDPipe())),
+    __param(2, (0, common_1.Param)('userId', new common_1.ParseUUIDPipe())),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object, String, String]),
+    __metadata("design:returntype", Promise)
+], MembershipsController.prototype, "remove", null);
 exports.MembershipsController = MembershipsController = __decorate([
     (0, common_1.UseGuards)(jwt_guard_1.JwtAuthGuard),
     (0, common_1.Controller)('tenants/:tenantId/memberships'),

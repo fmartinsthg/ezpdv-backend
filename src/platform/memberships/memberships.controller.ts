@@ -1,55 +1,61 @@
-// src/platform/memberships/memberships.controller.ts
 import {
-  Controller,
-  Get,
-  Post,
-  Param,
   Body,
-  UseGuards,
+  Controller,
+  Delete,
   ForbiddenException,
+  Get,
+  Param,
   ParseUUIDPipe,
-} from "@nestjs/common";
-import { JwtAuthGuard } from "../../auth/jwt.guard";
-import { CurrentUser } from "../../auth/current-user.decorator";
-import { AuthUser } from "../../auth/jwt.strategy";
-import { MembershipsService } from "./memberships.service";
-import { CreateMembershipDto } from "./dto/create-membership.dto";
-import { TenantRole } from "@prisma/client";
+  Post,
+  UseGuards,
+} from '@nestjs/common';
+import { JwtAuthGuard } from '../../auth/jwt.guard';
+import { CurrentUser } from '../../auth/current-user.decorator';
+import { AuthUser } from '../../auth/jwt.strategy';
+import { MembershipsService } from './memberships.service';
+import { CreateMembershipDto } from './dto/create-membership.dto';
 
 @UseGuards(JwtAuthGuard)
-@Controller("tenants/:tenantId/memberships")
+@Controller('tenants/:tenantId/memberships')
 export class MembershipsController {
   constructor(private readonly service: MembershipsService) {}
 
-  private resolveTenantScope(user: AuthUser, paramTenantId: string): string {
-    if (user.systemRole === "SUPERADMIN") return paramTenantId;
-    if (!user.tenantId || user.tenantId !== paramTenantId) {
-      throw new ForbiddenException("Operação não permitida para este tenant.");
+  /** Decide o tenant efetivo (SUPERADMIN pode qualquer, ADMIN só o próprio) */
+  private resolveTenantScope(user: AuthUser, routeTenantId: string): string {
+    if (user.systemRole === 'SUPERADMIN') return routeTenantId;
+    if (!user.tenantId || user.tenantId !== routeTenantId) {
+      throw new ForbiddenException('Operação não permitida para este tenant.');
     }
-    if (user.role !== TenantRole.ADMIN) {
-      throw new ForbiddenException(
-        "Apenas ADMIN do tenant pode gerenciar membros."
-      );
-    }
-    return paramTenantId;
+    return routeTenantId;
   }
 
   @Get()
-  list(
+  async list(
     @CurrentUser() user: AuthUser,
-    @Param("tenantId", new ParseUUIDPipe()) tenantIdParam: string
+    @Param('tenantId', new ParseUUIDPipe()) tenantIdParam: string,
   ) {
     const tenantId = this.resolveTenantScope(user, tenantIdParam);
-    return this.service.list(tenantId);
+    return this.service.list(user, tenantId);
   }
 
   @Post()
-  create(
+  async create(
     @CurrentUser() user: AuthUser,
-    @Param("tenantId", new ParseUUIDPipe()) tenantIdParam: string,
-    @Body() dto: CreateMembershipDto
+    @Param('tenantId', new ParseUUIDPipe()) tenantIdParam: string,
+    @Body() dto: CreateMembershipDto,
   ) {
     const tenantId = this.resolveTenantScope(user, tenantIdParam);
-    return this.service.create(tenantId, dto);
+    return this.service.create(user, tenantId, dto);
+  }
+
+  // (Opcional) Remoção de vínculo
+  @Delete(':userId')
+  async remove(
+    @CurrentUser() user: AuthUser,
+    @Param('tenantId', new ParseUUIDPipe()) tenantIdParam: string,
+    @Param('userId', new ParseUUIDPipe()) targetUserId: string,
+  ) {
+    const tenantId = this.resolveTenantScope(user, tenantIdParam);
+    return this.service.remove(user, tenantId, targetUserId);
   }
 }
