@@ -15,7 +15,7 @@ import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
-import { PaginationDto } from './dto/pagination.dto';
+import { CategoryPaginationDto } from './dto/pagination-category.dto';
 import { SearchCategoryDto } from './dto/search-category.dto';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../auth/jwt.strategy';
@@ -31,22 +31,12 @@ export class CategoryController {
     return await this.categoryService.findAll(user);
   }
 
-  @Get('paginated')
+@Get('paginated')
   async findAllPaginated(
     @CurrentUser() user: AuthUser,
-    @Query() paginationDto: PaginationDto,
+    @Query() paginationDto: CategoryPaginationDto,
   ) {
-    const page = Number(paginationDto.page ?? 1);
-    const limit = Math.min(Number(paginationDto.limit ?? 10), 100);
-    const sortBy = (paginationDto.sortBy as 'name' | 'createdAt' | 'updatedAt') ?? 'name';
-    const sortOrder = (paginationDto.sortOrder as 'asc' | 'desc') ?? 'asc';
-
-    return await this.categoryService.findAllPaginated(user, {
-      page,
-      limit,
-      sortBy,
-      sortOrder,
-    });
+    return await this.categoryService.findAllPaginated(user, paginationDto);
   }
 
   @Get(':id')

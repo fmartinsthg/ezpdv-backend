@@ -1,8 +1,8 @@
-import { IsOptional, IsNumber, IsEnum, Min, Max } from "class-validator";
+// src/common/dto/pagination.dto.ts
+import { IsOptional, IsNumber, Min, Max, IsEnum, IsString } from "class-validator";
 import { Type } from "class-transformer";
 import { ApiPropertyOptional } from "@nestjs/swagger";
 
-export type SortBy = "name" | "createdAt" | "updatedAt";
 export type SortOrder = "asc" | "desc";
 
 export class PaginationDto {
@@ -11,7 +11,7 @@ export class PaginationDto {
   @Type(() => Number)
   @IsNumber()
   @Min(1)
-  page?: number;
+  page: number = 1;
 
   @ApiPropertyOptional({ description: "Items per page", default: 10 })
   @IsOptional()
@@ -19,16 +19,7 @@ export class PaginationDto {
   @IsNumber()
   @Min(1)
   @Max(100)
-  limit?: number;
-
-  @ApiPropertyOptional({
-    description: "Sort by field",
-    enum: ["name", "createdAt", "updatedAt"],
-    default: "name",
-  })
-  @IsOptional()
-  @IsEnum(["name", "createdAt", "updatedAt"])
-  sortBy?: SortBy;
+  limit: number = 10;
 
   @ApiPropertyOptional({
     description: "Sort order",
@@ -37,12 +28,10 @@ export class PaginationDto {
   })
   @IsOptional()
   @IsEnum(["asc", "desc"])
-  sortOrder?: SortOrder;
+  sortOrder: SortOrder = "asc";
 
-  constructor() {
-    this.page = 1;
-    this.limit = 10;
-    this.sortBy = "name";
-    this.sortOrder = "asc";
-  }
+  @ApiPropertyOptional({ description: "Sort by field", default: "createdAt" })
+  @IsOptional()
+  @IsString()
+  sortBy: string = "createdAt";
 }

@@ -8,6 +8,7 @@ import { OrdersModule } from "./orders/orders.module";
 import { PrismaModule } from "./prisma/prisma.module";
 import { AuthModule } from "./auth/auth.module";
 import { CategoryModule } from "./category/category.module";
+import { PlatformModule } from "./platform/platform.module";
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { CategoryModule } from "./category/category.module";
     OrdersModule,
     AuthModule,
     CategoryModule,
+    PlatformModule,
   ],
   controllers: [AppController],
   providers: [],

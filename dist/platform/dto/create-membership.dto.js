@@ -9,24 +9,17 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CategoryPaginationDto = void 0;
-// src/categories/dto/pagination-category.dto.ts
+exports.CreateMembershipDto = void 0;
 const class_validator_1 = require("class-validator");
-const pagination_dto_1 = require("../../common/dto/pagination.dto");
-const swagger_1 = require("@nestjs/swagger");
-class CategoryPaginationDto extends pagination_dto_1.PaginationDto {
-    constructor() {
-        super(...arguments);
-        this.sortBy = "name";
-    }
+const client_1 = require("@prisma/client");
+class CreateMembershipDto {
 }
-exports.CategoryPaginationDto = CategoryPaginationDto;
+exports.CreateMembershipDto = CreateMembershipDto;
 __decorate([
-    (0, swagger_1.ApiPropertyOptional)({
-        description: "Sort by field for categories",
-        enum: ["name", "createdAt", "updatedAt"],
-        default: "name",
-    }),
-    (0, class_validator_1.IsEnum)(["name", "createdAt", "updatedAt"]),
+    (0, class_validator_1.IsUUID)(),
     __metadata("design:type", String)
-], CategoryPaginationDto.prototype, "sortBy", void 0);
+], CreateMembershipDto.prototype, "userId", void 0);
+__decorate([
+    (0, class_validator_1.IsEnum)(client_1.TenantRole, { message: `role deve ser um de: ${Object.values(client_1.TenantRole).join(', ')}` }),
+    __metadata("design:type", String)
+], CreateMembershipDto.prototype, "role", void 0);

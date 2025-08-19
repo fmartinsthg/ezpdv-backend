@@ -9,24 +9,28 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CategoryPaginationDto = void 0;
-// src/categories/dto/pagination-category.dto.ts
+exports.UpdateTenantDto = void 0;
+// src/platform/tenants/dto/update-tenant.dto.ts
 const class_validator_1 = require("class-validator");
-const pagination_dto_1 = require("../../common/dto/pagination.dto");
-const swagger_1 = require("@nestjs/swagger");
-class CategoryPaginationDto extends pagination_dto_1.PaginationDto {
-    constructor() {
-        super(...arguments);
-        this.sortBy = "name";
-    }
+const class_transformer_1 = require("class-transformer");
+class UpdateTenantDto {
 }
-exports.CategoryPaginationDto = CategoryPaginationDto;
+exports.UpdateTenantDto = UpdateTenantDto;
 __decorate([
-    (0, swagger_1.ApiPropertyOptional)({
-        description: "Sort by field for categories",
-        enum: ["name", "createdAt", "updatedAt"],
-        default: "name",
-    }),
-    (0, class_validator_1.IsEnum)(["name", "createdAt", "updatedAt"]),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
-], CategoryPaginationDto.prototype, "sortBy", void 0);
+], UpdateTenantDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_transformer_1.Transform)(({ value }) => String(value).trim().toLowerCase()),
+    (0, class_validator_1.Matches)(/^[a-z0-9-]+$/, {
+        message: 'slug deve conter apenas letras minúsculas, números e hífen',
+    }),
+    __metadata("design:type", String)
+], UpdateTenantDto.prototype, "slug", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsBoolean)(),
+    __metadata("design:type", Boolean)
+], UpdateTenantDto.prototype, "isActive", void 0);

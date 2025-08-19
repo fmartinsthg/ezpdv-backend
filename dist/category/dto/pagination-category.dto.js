@@ -10,7 +10,6 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CategoryPaginationDto = void 0;
-// src/categories/dto/pagination-category.dto.ts
 const class_validator_1 = require("class-validator");
 const pagination_dto_1 = require("../../common/dto/pagination.dto");
 const swagger_1 = require("@nestjs/swagger");

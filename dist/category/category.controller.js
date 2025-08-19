@@ -20,7 +20,7 @@ const roles_guard_1 = require("../auth/roles.guard");
 const roles_decorator_1 = require("../auth/roles.decorator");
 const create_category_dto_1 = require("./dto/create-category.dto");
 const update_category_dto_1 = require("./dto/update-category.dto");
-const pagination_dto_1 = require("./dto/pagination.dto");
+const pagination_category_dto_1 = require("./dto/pagination-category.dto");
 const search_category_dto_1 = require("./dto/search-category.dto");
 const current_user_decorator_1 = require("../auth/current-user.decorator");
 let CategoryController = class CategoryController {
@@ -32,16 +32,7 @@ let CategoryController = class CategoryController {
         return await this.categoryService.findAll(user);
     }
     async findAllPaginated(user, paginationDto) {
-        const page = Number(paginationDto.page ?? 1);
-        const limit = Math.min(Number(paginationDto.limit ?? 10), 100);
-        const sortBy = paginationDto.sortBy ?? 'name';
-        const sortOrder = paginationDto.sortOrder ?? 'asc';
-        return await this.categoryService.findAllPaginated(user, {
-            page,
-            limit,
-            sortBy,
-            sortOrder,
-        });
+        return await this.categoryService.findAllPaginated(user, paginationDto);
     }
     async findOne(user, id) {
         return await this.categoryService.findOne(user, id);
@@ -97,7 +88,7 @@ __decorate([
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __param(1, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, pagination_dto_1.PaginationDto]),
+    __metadata("design:paramtypes", [Object, pagination_category_dto_1.CategoryPaginationDto]),
     __metadata("design:returntype", Promise)
 ], CategoryController.prototype, "findAllPaginated", null);
 __decorate([
