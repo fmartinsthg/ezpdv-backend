@@ -22,169 +22,193 @@ const create_category_dto_1 = require("./dto/create-category.dto");
 const update_category_dto_1 = require("./dto/update-category.dto");
 const pagination_dto_1 = require("./dto/pagination.dto");
 const search_category_dto_1 = require("./dto/search-category.dto");
+const current_user_decorator_1 = require("../auth/current-user.decorator");
 let CategoryController = class CategoryController {
     constructor(categoryService) {
         this.categoryService = categoryService;
     }
     // Basic CRUD Operations
-    async findAll() {
-        return await this.categoryService.findAll();
+    async findAll(user) {
+        return await this.categoryService.findAll(user);
     }
-    async findAllPaginated(paginationDto) {
-        return await this.categoryService.findAllPaginated(paginationDto);
+    async findAllPaginated(user, paginationDto) {
+        const page = Number(paginationDto.page ?? 1);
+        const limit = Math.min(Number(paginationDto.limit ?? 10), 100);
+        const sortBy = paginationDto.sortBy ?? 'name';
+        const sortOrder = paginationDto.sortOrder ?? 'asc';
+        return await this.categoryService.findAllPaginated(user, {
+            page,
+            limit,
+            sortBy,
+            sortOrder,
+        });
     }
-    async findOne(id) {
-        return await this.categoryService.findOne(id);
+    async findOne(user, id) {
+        return await this.categoryService.findOne(user, id);
     }
-    async findWithProducts(id) {
-        return await this.categoryService.findWithProducts(id);
+    async findWithProducts(user, id) {
+        return await this.categoryService.findWithProducts(user, id);
     }
-    async getActiveCategoriesWithProductCount() {
-        return await this.categoryService.getActiveCategoriesWithProductCount();
+    async getActiveCategoriesWithProductCount(user) {
+        return await this.categoryService.getActiveCategoriesWithProductCount(user);
     }
-    async create(data) {
-        return await this.categoryService.create(data);
+    async create(user, data) {
+        return await this.categoryService.create(user, data);
     }
-    async update(id, data) {
-        return await this.categoryService.update(id, data);
+    async update(user, id, data) {
+        return await this.categoryService.update(user, id, data);
     }
     // Status Management
-    async deactivate(id) {
-        return await this.categoryService.deactivate(id);
+    async deactivate(user, id) {
+        return await this.categoryService.deactivate(user, id);
     }
-    async activate(id) {
-        return await this.categoryService.activate(id);
+    async activate(user, id) {
+        return await this.categoryService.activate(user, id);
     }
     // Search Operations
-    async search(searchCategoryDto) {
-        return await this.categoryService.search(searchCategoryDto);
+    async search(user, searchCategoryDto) {
+        return await this.categoryService.search(user, searchCategoryDto);
     }
     // Delete Operations
-    async delete(id) {
-        return await this.categoryService.delete(id);
+    async delete(user, id) {
+        return await this.categoryService.delete(user, id);
     }
-    async deleteSafe(id) {
-        return await this.categoryService.deleteSafe(id);
+    async deleteSafe(user, id) {
+        return await this.categoryService.deleteSafe(user, id);
     }
-    // Hierarchy Support (if needed)
-    async findSubcategories(id) {
-        return await this.categoryService.findSubcategories(id);
+    // Hierarchy Support
+    async findSubcategories(user, id) {
+        return await this.categoryService.findSubcategories(user, id);
     }
-    async getCategoryHierarchy() {
-        return await this.categoryService.getCategoryHierarchy();
+    async getCategoryHierarchy(user) {
+        return await this.categoryService.getCategoryHierarchy(user);
     }
 };
 exports.CategoryController = CategoryController;
 __decorate([
     (0, common_1.Get)(),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
+    __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", Promise)
 ], CategoryController.prototype, "findAll", null);
 __decorate([
-    (0, common_1.Get)("paginated"),
-    __param(0, (0, common_1.Query)()),
+    (0, common_1.Get)('paginated'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [pagination_dto_1.PaginationDto]),
+    __metadata("design:paramtypes", [Object, pagination_dto_1.PaginationDto]),
     __metadata("design:returntype", Promise)
 ], CategoryController.prototype, "findAllPaginated", null);
 __decorate([
-    (0, common_1.Get)(":id"),
-    __param(0, (0, common_1.Param)("id")),
+    (0, common_1.Get)(':id'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", Promise)
 ], CategoryController.prototype, "findOne", null);
 __decorate([
-    (0, common_1.Get)(":id/products"),
-    __param(0, (0, common_1.Param)("id")),
+    (0, common_1.Get)(':id/products'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", Promise)
 ], CategoryController.prototype, "findWithProducts", null);
 __decorate([
-    (0, common_1.Get)("active/with-count"),
+    (0, common_1.Get)('active/with-count'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
+    __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", Promise)
 ], CategoryController.prototype, "getActiveCategoriesWithProductCount", null);
 __decorate([
     (0, common_1.Post)(),
-    (0, roles_decorator_1.Roles)("ADMIN", "MODERATOR"),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR'),
     (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
-    __param(0, (0, common_1.Body)()),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [create_category_dto_1.CreateCategoryDto]),
+    __metadata("design:paramtypes", [Object, create_category_dto_1.CreateCategoryDto]),
     __metadata("design:returntype", Promise)
 ], CategoryController.prototype, "create", null);
 __decorate([
-    (0, common_1.Patch)(":id"),
-    (0, roles_decorator_1.Roles)("ADMIN", "MODERATOR"),
+    (0, common_1.Patch)(':id'),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR'),
     (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
-    __param(0, (0, common_1.Param)("id")),
-    __param(1, (0, common_1.Body)()),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id')),
+    __param(2, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, update_category_dto_1.UpdateCategoryDto]),
+    __metadata("design:paramtypes", [Object, String, update_category_dto_1.UpdateCategoryDto]),
     __metadata("design:returntype", Promise)
 ], CategoryController.prototype, "update", null);
 __decorate([
-    (0, common_1.Patch)(":id/deactivate"),
-    (0, roles_decorator_1.Roles)("ADMIN", "MODERATOR"),
+    (0, common_1.Patch)(':id/deactivate'),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR'),
     (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
-    __param(0, (0, common_1.Param)("id")),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", Promise)
 ], CategoryController.prototype, "deactivate", null);
 __decorate([
-    (0, common_1.Patch)(":id/activate"),
-    (0, roles_decorator_1.Roles)("ADMIN", "MODERATOR"),
+    (0, common_1.Patch)(':id/activate'),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR'),
     (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
-    __param(0, (0, common_1.Param)("id")),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", Promise)
 ], CategoryController.prototype, "activate", null);
 __decorate([
-    (0, common_1.Get)("search"),
-    __param(0, (0, common_1.Query)()),
+    (0, common_1.Get)('search'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [search_category_dto_1.SearchCategoryDto]),
+    __metadata("design:paramtypes", [Object, search_category_dto_1.SearchCategoryDto]),
     __metadata("design:returntype", Promise)
 ], CategoryController.prototype, "search", null);
 __decorate([
-    (0, common_1.Delete)(":id"),
-    (0, roles_decorator_1.Roles)("ADMIN"),
+    (0, common_1.Delete)(':id'),
+    (0, roles_decorator_1.Roles)('ADMIN'),
     (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
-    __param(0, (0, common_1.Param)("id")),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", Promise)
 ], CategoryController.prototype, "delete", null);
 __decorate([
-    (0, common_1.Delete)(":id/safe"),
-    (0, roles_decorator_1.Roles)("ADMIN"),
+    (0, common_1.Delete)(':id/safe'),
+    (0, roles_decorator_1.Roles)('ADMIN'),
     (0, common_1.UseGuards)(roles_guard_1.RolesGuard),
-    __param(0, (0, common_1.Param)("id")),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", Promise)
 ], CategoryController.prototype, "deleteSafe", null);
 __decorate([
-    (0, common_1.Get)(":id/subcategories"),
-    __param(0, (0, common_1.Param)("id")),
+    (0, common_1.Get)(':id/subcategories'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(1, (0, common_1.Param)('id')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String]),
+    __metadata("design:paramtypes", [Object, String]),
     __metadata("design:returntype", Promise)
 ], CategoryController.prototype, "findSubcategories", null);
 __decorate([
-    (0, common_1.Get)("hierarchy"),
+    (0, common_1.Get)('hierarchy'),
+    __param(0, (0, current_user_decorator_1.CurrentUser)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
+    __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", Promise)
 ], CategoryController.prototype, "getCategoryHierarchy", null);
 exports.CategoryController = CategoryController = __decorate([
-    (0, common_1.Controller)("categories"),
+    (0, common_1.Controller)('categories'),
     (0, common_1.UseGuards)(jwt_guard_1.JwtAuthGuard),
     __metadata("design:paramtypes", [category_service_1.CategoryService])
 ], CategoryController);

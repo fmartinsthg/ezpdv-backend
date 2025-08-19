@@ -1,32 +1,84 @@
-import { Controller, Get, Post, Body, Param, Put, Delete } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Param,
+  Patch,
+  Delete,
+  UseGuards,
+  ParseUUIDPipe,
+} from '@nestjs/common';
 import { UsersService } from './users.service';
+import { JwtAuthGuard } from '../auth/jwt.guard';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
+import { CurrentUser } from '../auth/current-user.decorator';
+import { AuthUser } from '../auth/jwt.strategy';
+import { CreateUserDto } from './dto/create-user.dto';
+import { UpdateUserDto } from './dto/update-user.dto';
 
+// Swagger (opcional)
+import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
+
+@ApiTags('users')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
 @Controller('users')
 export class UsersController {
   constructor(private readonly usersService: UsersService) {}
 
+  @ApiOperation({ summary: 'Listar usuários do restaurante' })
+  @ApiResponse({ status: 200 })
   @Get()
-  findAll() {
-    return this.usersService.findAll();
+  findAll(@CurrentUser() user: AuthUser) {
+    return this.usersService.findAll(user);
   }
 
+  @ApiOperation({ summary: 'Obter usuário do restaurante por ID' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 404, description: 'Usuário não encontrado' })
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.usersService.findById(id);
+  findOne(
+    @CurrentUser() user: AuthUser,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.usersService.findById(user, id);
   }
 
+  @ApiOperation({ summary: 'Criar/vincular usuário ao restaurante' })
+  @ApiResponse({ status: 201 })
+  @Roles('ADMIN', 'MODERATOR')
   @Post()
-  create(@Body() data: any) {
-    return this.usersService.create(data);
+  create(
+    @CurrentUser() user: AuthUser,
+    @Body() dto: CreateUserDto,
+  ) {
+    return this.usersService.create(user, dto);
   }
 
-  @Put(':id')
-  update(@Param('id') id: string, @Body() data: any) {
-    return this.usersService.update(id, data);
+  @ApiOperation({ summary: 'Atualizar usuário do restaurante' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 404, description: 'Usuário não encontrado' })
+  @Roles('ADMIN', 'MODERATOR')
+  @Patch(':id')
+  update(
+    @CurrentUser() user: AuthUser,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Body() dto: UpdateUserDto,
+  ) {
+    return this.usersService.update(user, id, dto);
   }
 
+  @ApiOperation({ summary: 'Remover usuário do restaurante (desvincular)' })
+  @ApiResponse({ status: 200 })
+  @ApiResponse({ status: 404, description: 'Usuário não encontrado' })
+  @Roles('ADMIN', 'MODERATOR')
   @Delete(':id')
-  delete(@Param('id') id: string) {
-    return this.usersService.delete(id);
+  delete(
+    @CurrentUser() user: AuthUser,
+    @Param('id', new ParseUUIDPipe()) id: string,
+  ) {
+    return this.usersService.delete(user, id);
   }
 }

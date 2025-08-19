@@ -1,19 +1,60 @@
+// src/category/category.service.ts
 import {
   Injectable,
   NotFoundException,
   BadRequestException,
+  ConflictException,
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateCategoryDto } from "./dto/create-category.dto";
 import { UpdateCategoryDto } from "./dto/update-category.dto";
+import { AuthUser } from "../auth/jwt.strategy";
 
 @Injectable()
 export class CategoryService {
   constructor(private readonly prisma: PrismaService) {}
+  /**
+   * Returns all active categories for the tenant, each with the count of active products in that category.
+   */
+  async getActiveCategoriesWithProductCount(user: AuthUser) {
+    // Get all active categories for the tenant
+    const categories = await this.prisma.category.findMany({
+      where: { tenantId: user.tenantId!, isActive: true },
+      orderBy: { name: "asc" },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        isActive: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
 
-  // Basic CRUD Operations
-  async findAll() {
+    // For each category, count active products in that category for the tenant
+    const results = await Promise.all(
+      categories.map(async (category) => {
+        const productCount = await this.prisma.product.count({
+          where: {
+            categoryId: category.id,
+            tenantId: user.tenantId!,
+            isActive: true,
+          },
+        });
+        return { ...category, productCount };
+      })
+    );
+    return results;
+  }
+
+  /* =========================
+   *        LISTAGEM
+   * ========================= */
+
+  async findAll(user: AuthUser) {
     return this.prisma.category.findMany({
+      where: { tenantId: user.tenantId! },
+      orderBy: { name: "asc" },
       select: {
         id: true,
         name: true,
@@ -25,17 +66,21 @@ export class CategoryService {
     });
   }
 
-  async findAllPaginated(params: {
-    page?: number;
-    limit?: number;
-    sortBy?: "name" | "createdAt" | "updatedAt";
-    sortOrder?: "asc" | "desc";
-  }) {
+  async findAllPaginated(
+    user: AuthUser,
+    params: {
+      page?: number;
+      limit?: number;
+      sortBy?: "name" | "createdAt" | "updatedAt";
+      sortOrder?: "asc" | "desc";
+    }
+  ) {
     const { page = 1, limit = 10, sortBy = "name", sortOrder = "asc" } = params;
     const skip = (page - 1) * limit;
 
     const [categories, total] = await Promise.all([
       this.prisma.category.findMany({
+        where: { tenantId: user.tenantId! },
         skip,
         take: limit,
         orderBy: { [sortBy]: sortOrder },
@@ -48,7 +93,9 @@ export class CategoryService {
           updatedAt: true,
         },
       }),
-      this.prisma.category.count(),
+      this.prisma.category.count({
+        where: { tenantId: user.tenantId! },
+      }),
     ]);
 
     return {
@@ -60,9 +107,9 @@ export class CategoryService {
     };
   }
 
-  async findOne(id: string) {
-    const category = await this.prisma.category.findUnique({
-      where: { id },
+  async findOne(user: AuthUser, id: string) {
+    const category = await this.prisma.category.findFirst({
+      where: { id, tenantId: user.tenantId! },
       select: {
         id: true,
         name: true,
@@ -76,11 +123,12 @@ export class CategoryService {
     return category;
   }
 
-  async findWithProducts(id: string) {
-    const category = await this.prisma.category.findUnique({
-      where: { id },
+  async findWithProducts(user: AuthUser, id: string) {
+    const category = await this.prisma.category.findFirst({
+      where: { id, tenantId: user.tenantId! },
       include: {
         products: {
+          where: { tenantId: user.tenantId! },
           select: {
             id: true,
             name: true,
@@ -97,57 +145,31 @@ export class CategoryService {
     return category;
   }
 
-  async create(data: CreateCategoryDto) {
-    // Check if category with same name already exists
-    const existingCategory = await this.prisma.category.findUnique({
-      where: { name: data.name },
+  /* =========================
+   *        CRUD
+   * ========================= */
+
+  async create(user: AuthUser, data: CreateCategoryDto) {
+    // Unicidade por tenant (tenantId_name)
+    const exists = await this.prisma.category.findUnique({
+      where: { tenantId_name: { tenantId: user.tenantId!, name: data.name } },
+      select: { id: true },
     });
-
-    if (existingCategory) {
-      throw new BadRequestException("Já existe uma categoria com este nome");
-    }
-
-    return this.prisma.category.create({
-      data: {
-        ...data,
-        isActive: true, // Default to active when creating
-      },
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        isActive: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-    });
-  }
-
-  async update(id: string, data: UpdateCategoryDto) {
-    // Check if category exists
-    const existingCategory = await this.prisma.category.findUnique({
-      where: { id },
-    });
-
-    if (!existingCategory) {
-      throw new NotFoundException("Categoria não encontrada");
-    }
-
-    // If updating name, check if new name already exists
-    if (data.name && data.name !== existingCategory.name) {
-      const nameExists = await this.prisma.category.findUnique({
-        where: { name: data.name },
-      });
-
-      if (nameExists) {
-        throw new BadRequestException("Já existe uma categoria com este nome");
-      }
+    if (exists) {
+      throw new BadRequestException(
+        "Já existe uma categoria com este nome neste restaurante"
+      );
     }
 
     try {
-      return await this.prisma.category.update({
-        where: { id },
-        data,
+      return await this.prisma.category.create({
+        data: {
+          name: data.name,
+          description: data.description,
+          isActive: true,
+          tenant: { connect: { id: user.tenantId! } },
+          ...(data.parentId && { parent: { connect: { id: data.parentId } } }),
+        },
         select: {
           id: true,
           name: true,
@@ -158,14 +180,97 @@ export class CategoryService {
         },
       });
     } catch (error: any) {
-      if (error.code === "P2025") {
-        throw new NotFoundException("Categoria não encontrada");
+      if (
+        error.code === "P2002" &&
+        error.meta?.target?.includes("tenantId_name")
+      ) {
+        throw new ConflictException(
+          "Já existe uma categoria com este nome neste restaurante."
+        );
+      }
+      if (error.code === "P2003") {
+        // FK inválida (ex.: parentId não existe no tenant)
+        throw new BadRequestException("Categoria pai inválida.");
+      }
+      if (error.code === "22P02") {
+        // UUID inválido
+        throw new BadRequestException("IDs devem ser UUIDs válidos.");
       }
       throw error;
     }
   }
 
-  async delete(id: string) {
+  async update(user: AuthUser, id: string, data: UpdateCategoryDto) {
+    // Garante existência e escopo
+    const existing = await this.prisma.category.findFirst({
+      where: { id, tenantId: user.tenantId! },
+      select: { id: true, name: true },
+    });
+    if (!existing) throw new NotFoundException("Categoria não encontrada");
+
+    // Se trocar o nome, valida unicidade por tenant
+    if (data.name && data.name !== existing.name) {
+      const nameExists = await this.prisma.category.findUnique({
+        where: {
+          tenantId_name: { tenantId: user.tenantId!, name: data.name },
+        },
+        select: { id: true },
+      });
+      if (nameExists) {
+        throw new BadRequestException(
+          "Já existe uma categoria com este nome neste restaurante"
+        );
+      }
+    }
+
+    // parentId: permitir conectar, desconectar (null), ou manter (undefined)
+    const parentData =
+      data.parentId === undefined
+        ? {}
+        : data.parentId === null
+        ? { parent: { disconnect: true } }
+        : { parent: { connect: { id: data.parentId } } };
+
+    try {
+      return await this.prisma.category.update({
+        where: { id },
+        data: {
+          name: data.name,
+          description: data.description,
+          isActive: data.isActive,
+          ...parentData,
+        },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          isActive: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+    } catch (error: any) {
+      if (
+        error.code === "P2002" &&
+        error.meta?.target?.includes("tenantId_name")
+      ) {
+        throw new ConflictException(
+          "Já existe uma categoria com este nome neste restaurante."
+        );
+      }
+      if (error.code === "P2025") {
+        throw new NotFoundException("Categoria não encontrada");
+      }
+      if (error.code === "22P02") {
+        throw new BadRequestException("IDs devem ser UUIDs válidos.");
+      }
+      throw error;
+    }
+  }
+
+  async delete(user: AuthUser, id: string) {
+    // valida escopo
+    await this.findOne(user, id);
     try {
       return await this.prisma.category.delete({ where: { id } });
     } catch (error: any) {
@@ -176,17 +281,13 @@ export class CategoryService {
     }
   }
 
-  async deleteSafe(id: string) {
-    // Check if category exists
-    const category = await this.prisma.category.findUnique({
-      where: { id },
-    });
+  async deleteSafe(user: AuthUser, id: string) {
+    // valida escopo
+    await this.findOne(user, id);
 
-    if (!category) throw new NotFoundException("Categoria não encontrada");
-
-    // Check if category has products
+    // Checa se tem produtos no mesmo tenant
     const productCount = await this.prisma.product.count({
-      where: { categoryId: id },
+      where: { categoryId: id, tenantId: user.tenantId!, isActive: true },
     });
 
     if (productCount > 0) {
@@ -195,14 +296,17 @@ export class CategoryService {
       );
     }
 
-    // If no products, proceed with deletion
     return this.prisma.category.delete({ where: { id } });
   }
 
-  // Search Operations
-  async findByName(name: string) {
-    return this.prisma.category.findFirst({
-      where: { name },
+  /* =========================
+   *        BUSCAS
+   * ========================= */
+
+  async findByName(user: AuthUser, name: string) {
+    // Busca exata por chave composta
+    return this.prisma.category.findUnique({
+      where: { tenantId_name: { tenantId: user.tenantId!, name } },
       select: {
         id: true,
         name: true,
@@ -214,15 +318,18 @@ export class CategoryService {
     });
   }
 
-  async search(params: {
-    name?: string;
-    description?: string;
-    exactMatch?: boolean;
-    isActive?: boolean;
-  }) {
+  async search(
+    user: AuthUser,
+    params: {
+      name?: string;
+      description?: string;
+      exactMatch?: boolean;
+      isActive?: boolean;
+    }
+  ) {
     const { name, description, exactMatch = false, isActive } = params;
 
-    const where: any = {};
+    const where: any = { tenantId: user.tenantId! };
 
     if (name) {
       where.name = exactMatch ? name : { contains: name, mode: "insensitive" };
@@ -240,6 +347,7 @@ export class CategoryService {
 
     return this.prisma.category.findMany({
       where,
+      orderBy: { name: "asc" },
       select: {
         id: true,
         name: true,
@@ -251,8 +359,12 @@ export class CategoryService {
     });
   }
 
-  // Status Management
-  async deactivate(id: string) {
+  /* =========================
+   *        STATUS
+   * ========================= */
+
+  async deactivate(user: AuthUser, id: string) {
+    await this.findOne(user, id);
     try {
       return await this.prisma.category.update({
         where: { id },
@@ -273,7 +385,8 @@ export class CategoryService {
     }
   }
 
-  async activate(id: string) {
+  async activate(user: AuthUser, id: string) {
+    await this.findOne(user, id);
     try {
       return await this.prisma.category.update({
         where: { id },
@@ -294,43 +407,14 @@ export class CategoryService {
     }
   }
 
-  // Product Relationship Methods
-  async countProductsInCategory(id: string) {
-    return this.prisma.product.count({
-      where: {
-        categoryId: id,
-        isActive: true, // Only count active products
-      },
-    });
-  }
+  /* =========================
+   *       HIERARQUIA
+   * ========================= */
 
-  async getActiveCategoriesWithProductCount() {
-    const categories = await this.prisma.category.findMany({
-      where: { isActive: true },
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        _count: {
-          select: {
-            products: {
-              where: { isActive: true },
-            },
-          },
-        },
-      },
-    });
-
-    return categories.map((category) => ({
-      ...category,
-      productCount: category._count.products,
-    }));
-  }
-
-  // Hierarchy Support (if needed for your POS)
-  async findSubcategories(parentId: string) {
+  async findSubcategories(user: AuthUser, parentId: string) {
     return this.prisma.category.findMany({
-      where: { parentId, isActive: true },
+      where: { tenantId: user.tenantId!, parentId, isActive: true },
+      orderBy: { name: "asc" },
       select: {
         id: true,
         name: true,
@@ -342,16 +426,16 @@ export class CategoryService {
     });
   }
 
-  async getCategoryHierarchy() {
+  async getCategoryHierarchy(user: AuthUser) {
     const categories = await this.prisma.category.findMany({
-      where: { isActive: true },
+      where: { tenantId: user.tenantId!, isActive: true },
       orderBy: { name: "asc" },
     });
 
-    // Build hierarchy tree
     type CategoryNode = (typeof categories)[number] & {
       children: CategoryNode[];
     };
+
     const buildTree = (parentId: string | null = null): CategoryNode[] => {
       return categories
         .filter((category) => category.parentId === parentId)
@@ -360,6 +444,7 @@ export class CategoryService {
           children: buildTree(category.id),
         }));
     };
+
     return buildTree();
   }
 }

@@ -7,88 +7,19 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-model User {
-  id                    String                 @id @default(uuid())
-  name                  String
-  email                 String                 @unique
-  password              String
-  role                  Role                   @default(USER)
-  active                Boolean                @default(true)
-  createdAt             DateTime               @default(now())
-  updatedAt             DateTime               @updatedAt
-  financialTransactions FinancialTransaction[] @relation("UserFinancialTransactions")
-  sales                 Sale[]
+/* ------------------------- Enums Globais ------------------------- */
+
+/// Papel GLOBAL, para administração da plataforma
+enum SystemRole {
+  SUPERADMIN   // pode criar/editar tenants e gerenciar contas
+  SUPPORT      // opcional, suporte limitado
+  NONE         // padrão para usuários comuns
 }
 
-model Category {
-  id          String     @id @default(uuid())
-  name        String     @unique
-  description String?
-  isActive    Boolean    @default(true)
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-  parentId    String?
-  parent      Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
-  children    Category[] @relation("CategoryHierarchy")
-  products    Product[]
-
-  @@map("categories")
-}
-
-model Product {
-  id          String     @id @default(uuid())
-  name        String
-  price       Float
-  cost        Float
-  barcode     String?    @unique
-  stock       Int        @default(0)
-  description String?
-  isActive    Boolean    @default(true)
-  categoryId  String?
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-  saleItems   SaleItem[]
-  category    Category?  @relation(fields: [categoryId], references: [id])
-
-  @@map("products")
-}
-
-model Sale {
-  id        String        @id @default(uuid())
-  total     Decimal       @db.Decimal(10, 2)
-  payment   PaymentMethod
-  discount  Decimal?      @db.Decimal(10, 2)
-  tax       Decimal?      @db.Decimal(10, 2)
-  createdAt DateTime      @default(now())
-  userId    String
-  user      User          @relation(fields: [userId], references: [id])
-  items     SaleItem[]
-}
-
-model SaleItem {
-  id        String  @id @default(uuid())
-  saleId    String
-  productId String
-  quantity  Int
-  price     Decimal @db.Decimal(10, 2)
-  product   Product @relation(fields: [productId], references: [id])
-  sale      Sale    @relation(fields: [saleId], references: [id])
-}
-
-model FinancialTransaction {
-  id          String          @id @default(uuid())
-  type        TransactionType
-  amount      Decimal         @db.Decimal(10, 2)
-  description String?
-  createdAt   DateTime        @default(now())
-  createdById String
-  createdBy   User            @relation("UserFinancialTransactions", fields: [createdById], references: [id])
-}
-
-enum Role {
-  ADMIN
-  MODERATOR
-  USER
+enum TenantRole {
+  ADMIN        // dono/administrador do restaurante
+  MODERATOR    // gerente/financeiro
+  USER         // atendente/garçom
 }
 
 enum PaymentMethod {
@@ -103,4 +34,148 @@ enum TransactionType {
   EXIT
   SANGRIA
   OTHER
+}
+
+/* ------------------------- Multi-tenant ------------------------- */
+
+model Tenant {
+  id        String   @id @default(uuid())
+  name      String
+  slug      String?  @unique // opcional: subdomínio/identificador estável
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  memberships UserTenant[]
+  categories  Category[]
+  products    Product[]
+  sales       Sale[]
+  financials  FinancialTransaction[]
+}
+
+model User {
+  id         String     @id @default(uuid())
+  name       String
+  email      String     @unique
+  password   String
+  active     Boolean    @default(true)
+  systemRole SystemRole @default(NONE)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
+
+  memberships            UserTenant[]
+  financialTransactions  FinancialTransaction[] @relation("UserFinancialTransactions")
+  sales                  Sale[]
+}
+
+model UserTenant {
+  // vínculo usuário↔tenant com papel no tenant
+  userId   String
+  tenantId String
+  role     TenantRole @default(USER)
+
+  user     User   @relation(fields: [userId], references: [id])
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+
+  @@id([userId, tenantId])  // evita duplicidade de membership
+  @@index([tenantId, role])
+}
+
+/* ------------------------- Domínio (por tenant) ------------------------- */
+
+model Category {
+  id          String     @id @default(uuid())
+  tenantId    String
+  name        String
+  description String?
+  isActive    Boolean    @default(true)
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+
+  parentId    String?
+  parent      Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children    Category[] @relation("CategoryHierarchy")
+
+  tenant      Tenant     @relation(fields: [tenantId], references: [id])
+  products    Product[]
+
+
+  @@unique([tenantId, name])
+  @@index([tenantId, name])
+
+  @@map("categories")
+}
+
+model Product {
+  id          String     @id @default(uuid())
+  tenantId    String
+  name        String
+  description String?
+  price       Decimal    @db.Decimal(10, 2) 
+  cost        Decimal    @db.Decimal(10, 2)
+  barcode     String?
+  stock       Int        @default(0)
+  isActive    Boolean    @default(true)
+
+  categoryId  String?
+  category    Category?  @relation(fields: [categoryId], references: [id])
+
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  tenant      Tenant     @relation(fields: [tenantId], references: [id])
+  saleItems   SaleItem[]
+
+  @@unique([tenantId, name])
+
+  @@unique([tenantId, barcode])
+  @@index([tenantId, name])
+  @@index([tenantId, barcode])
+
+  @@map("products")
+}
+
+model Sale {
+  id         String     @id @default(uuid())
+  tenantId   String
+  total      Decimal    @db.Decimal(10, 2)
+  payment    PaymentMethod
+  discount   Decimal?   @db.Decimal(10, 2)
+  tax        Decimal?   @db.Decimal(10, 2)
+  createdAt  DateTime   @default(now())
+
+  userId     String
+  user       User       @relation(fields: [userId], references: [id])
+  tenant     Tenant     @relation(fields: [tenantId], references: [id])
+
+  items      SaleItem[]
+
+  @@index([tenantId, createdAt])
+}
+
+model SaleItem {
+  id        String   @id @default(uuid())
+  saleId    String
+  productId String
+  quantity  Int
+  price     Decimal  @db.Decimal(10, 2)
+
+  sale      Sale     @relation(fields: [saleId], references: [id])
+  product   Product  @relation(fields: [productId], references: [id])
+}
+
+model FinancialTransaction {
+  id          String          @id @default(uuid())
+  tenantId    String
+  type        TransactionType
+  amount      Decimal         @db.Decimal(10, 2)
+  description String?
+  createdAt   DateTime        @default(now())
+
+  createdById String
+  createdBy   User            @relation("UserFinancialTransactions", fields: [createdById], references: [id])
+
+  tenant      Tenant          @relation(fields: [tenantId], references: [id])
+
+  @@index([tenantId, type, createdAt])
 }

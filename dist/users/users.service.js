@@ -44,51 +44,290 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.UsersService = void 0;
 const common_1 = require("@nestjs/common");
-const prisma_service_1 = require("../prisma/prisma.service");
 const client_1 = require("@prisma/client");
 const bcrypt = __importStar(require("bcrypt"));
+const prisma_service_1 = require("../prisma/prisma.service");
 let UsersService = class UsersService {
     constructor(prisma) {
         this.prisma = prisma;
     }
-    async findAll() {
-        return this.prisma.user.findMany();
+    /** Helper: só ADMIN/MODERATOR podem gerenciar usuários do tenant */
+    canManage(role) {
+        return role === client_1.TenantRole.ADMIN || role === client_1.TenantRole.MODERATOR;
     }
-    async findById(id) {
-        return this.prisma.user.findUnique({ where: { id } });
+    /** Helper: resolve tenant alvo da operação */
+    resolveTargetTenantId(user, dtoTenantId) {
+        if (user.systemRole === client_1.SystemRole.SUPERADMIN) {
+            // SUPERADMIN precisa de tenantId explícito no token ou dto
+            const target = user.tenantId ?? dtoTenantId;
+            if (!target) {
+                throw new common_1.BadRequestException('SUPERADMIN precisa informar tenantId para operar.');
+            }
+            return target;
+        }
+        if (!user.tenantId) {
+            throw new common_1.ForbiddenException('Contexto de restaurante não definido.');
+        }
+        return user.tenantId;
     }
+    /** Lista usuários do restaurante (por membership) */
+    async findAll(user) {
+        const tenantId = this.resolveTargetTenantId(user);
+        // pega memberships do tenant com o usuário vinculado
+        const memberships = await this.prisma.userTenant.findMany({
+            where: { tenantId },
+            include: {
+                user: {
+                    select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        active: true,
+                        systemRole: true,
+                        createdAt: true,
+                        updatedAt: true,
+                    },
+                },
+            },
+            orderBy: { role: 'asc' },
+        });
+        return memberships.map((m) => ({
+            ...m.user,
+            tenantRole: m.role,
+        }));
+    }
+    /** Busca usuário por id, restrito ao tenant */
+    async findById(user, id) {
+        const tenantId = this.resolveTargetTenantId(user);
+        const membership = await this.prisma.userTenant.findFirst({
+            where: { tenantId, userId: id },
+            include: {
+                user: {
+                    select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        active: true,
+                        systemRole: true,
+                        createdAt: true,
+                        updatedAt: true,
+                    },
+                },
+            },
+        });
+        if (!membership)
+            throw new common_1.NotFoundException('Usuário não encontrado.');
+        return { ...membership.user, tenantRole: membership.role };
+    }
+    /** Usado pelo AuthService (sem escopo de tenant aqui) */
     async findByEmail(email) {
-        return this.prisma.user.findUnique({ where: { email: email.toString() } });
+        return this.prisma.user.findUnique({
+            where: { email },
+            include: { memberships: true },
+        });
     }
-    async create(data) {
-        try {
-            if (!data.password) {
-                throw new common_1.BadRequestException("Senha é obrigatória");
-            }
+    /**
+     * Cria (ou vincula) um usuário ao tenant
+     * - Se já existir usuário com o email, cria apenas o membership (se não existir)
+     * - Se não existir, cria o user + membership
+     */
+    async create(current, data) {
+        const tenantId = this.resolveTargetTenantId(current, data.tenantId);
+        if (!this.canManage(current.role)) {
+            throw new common_1.ForbiddenException('Sem permissão para criar usuários.');
+        }
+        if (!data.role) {
+            throw new common_1.BadRequestException('role (TenantRole) é obrigatório.');
+        }
+        // valida TenantRole
+        if (!Object.values(client_1.TenantRole).includes(data.role)) {
+            throw new common_1.BadRequestException(`Role inválido. Permitidos: ${Object.values(client_1.TenantRole).join(', ')}`);
+        }
+        // senha (se enviado)
+        let hashedPassword;
+        if (data.password) {
             const salt = await bcrypt.genSalt();
-            const hashedPassword = await bcrypt.hash(data.password, salt);
-            // Validação do papel
-            const role = data.role ? data.role.toUpperCase() : "USER";
-            if (!Object.values(client_1.Role).includes(role)) {
-                throw new common_1.BadRequestException(`Role inválido. Valores permitidos: ${Object.values(client_1.Role).join(", ")}`);
+            hashedPassword = await bcrypt.hash(data.password, salt);
+        }
+        // verifica se já existe usuário com email
+        const existing = await this.prisma.user.findUnique({
+            where: { email: data.email },
+            include: { memberships: { where: { tenantId } } },
+        });
+        if (existing) {
+            // se já tem membership para o tenant, erro
+            if (existing.memberships.length > 0) {
+                throw new common_1.BadRequestException('Usuário já está vinculado a este restaurante.');
             }
-            return await this.prisma.user.create({
+            // vincula ao tenant
+            const membership = await this.prisma.userTenant.create({
                 data: {
-                    ...data,
-                    password: hashedPassword,
-                    role,
+                    userId: existing.id,
+                    tenantId,
+                    role: data.role,
                 },
             });
+            // atualiza senha se enviada (opcional)
+            if (hashedPassword) {
+                await this.prisma.user.update({
+                    where: { id: existing.id },
+                    data: { password: hashedPassword },
+                });
+            }
+            return {
+                id: existing.id,
+                name: existing.name,
+                email: existing.email,
+                active: existing.active,
+                systemRole: existing.systemRole,
+                tenantRole: membership.role,
+                createdAt: existing.createdAt,
+                updatedAt: existing.updatedAt,
+            };
         }
-        catch (error) {
-            throw new common_1.BadRequestException(error.message || "Erro ao criar usuário");
+        // cria user + membership em transação
+        try {
+            const result = await this.prisma.$transaction(async (tx) => {
+                const created = await tx.user.create({
+                    data: {
+                        name: data.name,
+                        email: data.email,
+                        password: hashedPassword ?? (await bcrypt.hash('changeme', 10)), // fallback
+                        active: true,
+                        systemRole: client_1.SystemRole.NONE,
+                    },
+                });
+                const membership = await tx.userTenant.create({
+                    data: {
+                        userId: created.id,
+                        tenantId,
+                        role: data.role,
+                    },
+                });
+                return { created, membership };
+            });
+            return {
+                id: result.created.id,
+                name: result.created.name,
+                email: result.created.email,
+                active: result.created.active,
+                systemRole: result.created.systemRole,
+                tenantRole: result.membership.role,
+                createdAt: result.created.createdAt,
+                updatedAt: result.created.updatedAt,
+            };
+        }
+        catch (e) {
+            if (e.code === 'P2002') {
+                throw new common_1.BadRequestException('E-mail já está em uso.');
+            }
+            throw e;
         }
     }
-    async update(id, data) {
-        return this.prisma.user.update({ where: { id }, data });
+    /**
+     * Atualiza dados do usuário no tenant (nome/email/senha, e papel no tenant)
+     * - Se `role` vier: atualiza o membership do tenant.
+     */
+    async update(current, id, data) {
+        const tenantId = this.resolveTargetTenantId(current);
+        if (!this.canManage(current.role)) {
+            throw new common_1.ForbiddenException('Sem permissão para atualizar usuários.');
+        }
+        // garante que o user pertence ao tenant
+        const membership = await this.prisma.userTenant.findFirst({
+            where: { tenantId, userId: id },
+        });
+        if (!membership)
+            throw new common_1.NotFoundException('Usuário não encontrado.');
+        // prepara campos de user
+        const userData = {};
+        if (data.name !== undefined)
+            userData.name = data.name;
+        if (data.email !== undefined)
+            userData.email = data.email;
+        if (data.password) {
+            const salt = await bcrypt.genSalt();
+            userData.password = await bcrypt.hash(data.password, salt);
+        }
+        // executa transação (update user + update membership role se enviado)
+        const result = await this.prisma.$transaction(async (tx) => {
+            const updated = Object.keys(userData).length
+                ? await tx.user.update({
+                    where: { id },
+                    data: userData,
+                    select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        active: true,
+                        systemRole: true,
+                        createdAt: true,
+                        updatedAt: true,
+                    },
+                })
+                : await tx.user.findUnique({
+                    where: { id },
+                    select: {
+                        id: true,
+                        name: true,
+                        email: true,
+                        active: true,
+                        systemRole: true,
+                        createdAt: true,
+                        updatedAt: true,
+                    },
+                });
+            if (!updated) {
+                throw new common_1.NotFoundException('Usuário não encontrado.');
+            }
+            if (data.role !== undefined) {
+                if (data.role !== null &&
+                    !Object.values(client_1.TenantRole).includes(data.role)) {
+                    throw new common_1.BadRequestException(`Role inválido. Permitidos: ${Object.values(client_1.TenantRole).join(', ')}`);
+                }
+                if (data.role === null) {
+                    // opcional: remover vínculo do tenant
+                    await tx.userTenant.delete({
+                        where: { userId_tenantId: { userId: id, tenantId } },
+                    });
+                }
+                else {
+                    await tx.userTenant.update({
+                        where: { userId_tenantId: { userId: id, tenantId } },
+                        data: { role: data.role },
+                    });
+                }
+            }
+            // retorna com role atual
+            const currentMembership = await tx.userTenant.findUnique({
+                where: { userId_tenantId: { userId: id, tenantId } },
+            });
+            return {
+                ...updated,
+                tenantRole: currentMembership?.role ?? null,
+            };
+        });
+        return result;
     }
-    async delete(id) {
-        return this.prisma.user.delete({ where: { id } });
+    /**
+     * Remove o usuário do tenant (exclui o membership). Se não restarem memberships,
+     * opcionalmente poderíamos excluir o usuário — aqui vamos **apenas** desvincular.
+     */
+    async delete(current, id) {
+        const tenantId = this.resolveTargetTenantId(current);
+        if (!this.canManage(current.role)) {
+            throw new common_1.ForbiddenException('Sem permissão para remover usuários.');
+        }
+        // garante que existe membership no tenant
+        const membership = await this.prisma.userTenant.findFirst({
+            where: { tenantId, userId: id },
+        });
+        if (!membership)
+            throw new common_1.NotFoundException('Usuário não encontrado.');
+        await this.prisma.userTenant.delete({
+            where: { userId_tenantId: { userId: id, tenantId } },
+        });
+        return { ok: true };
     }
 };
 exports.UsersService = UsersService;

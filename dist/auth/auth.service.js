@@ -45,24 +45,68 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AuthService = void 0;
 const common_1 = require("@nestjs/common");
 const jwt_1 = require("@nestjs/jwt");
-const users_service_1 = require("../users/users.service");
 const bcrypt = __importStar(require("bcrypt"));
+const prisma_service_1 = require("../prisma/prisma.service");
+const client_1 = require("@prisma/client");
 let AuthService = class AuthService {
-    constructor(usersService, jwtService) {
-        this.usersService = usersService;
+    constructor(prisma, jwtService) {
+        this.prisma = prisma;
         this.jwtService = jwtService;
     }
+    /** Busca o usuário com memberships e valida a senha */
     async validateUser(email, password) {
-        const user = await this.usersService.findByEmail(email);
-        if (user && await bcrypt.compare(password, user.password)) {
-            const { password, ...result } = user;
-            return result;
+        const user = await this.prisma.user.findUnique({
+            where: { email },
+            include: { memberships: true }, // pega vínculos com tenants
+        });
+        if (!user || !user.active) {
+            throw new common_1.UnauthorizedException("Credenciais inválidas");
         }
-        throw new common_1.UnauthorizedException('Credenciais inválidas');
+        const ok = await bcrypt.compare(password, user.password);
+        if (!ok) {
+            throw new common_1.UnauthorizedException("Credenciais inválidas");
+        }
+        return user;
     }
+    /** Login com suporte a multi-tenant */
     async login(dto) {
         const user = await this.validateUser(dto.email, dto.password);
-        const payload = { sub: user.id, role: user.role };
+        // Determinar o contexto do tenant e o papel dentro do tenant
+        let selectedTenantId = null;
+        let tenantRole = null;
+        if (user.systemRole === client_1.SystemRole.SUPERADMIN) {
+            // SUPERADMIN opera sem tenant por padrão (rotas de plataforma)
+            selectedTenantId = null;
+            tenantRole = null;
+        }
+        else {
+            const memberships = user.memberships;
+            if (!memberships || memberships.length === 0) {
+                throw new common_1.UnauthorizedException("Usuário não possui acesso a nenhum restaurante.");
+            }
+            if (dto.tenantId) {
+                const m = memberships.find((mm) => mm.tenantId === dto.tenantId);
+                if (!m) {
+                    throw new common_1.BadRequestException("Usuário não é membro do restaurante informado.");
+                }
+                selectedTenantId = m.tenantId;
+                tenantRole = m.role;
+            }
+            else if (memberships.length === 1) {
+                selectedTenantId = memberships[0].tenantId;
+                tenantRole = memberships[0].role;
+            }
+            else {
+                // Usuário pertence a vários tenants e não informou tenantId
+                throw new common_1.BadRequestException("Usuário pertence a múltiplos restaurantes. Informe o tenantId no login.");
+            }
+        }
+        const payload = {
+            sub: user.id,
+            systemRole: user.systemRole, // SUPERADMIN | SUPPORT | NONE
+            tenantId: selectedTenantId, // null para SUPERADMIN
+            role: tenantRole, // TenantRole no contexto do tenant, ou null
+        };
         return {
             access_token: this.jwtService.sign(payload),
         };
@@ -71,6 +115,6 @@ let AuthService = class AuthService {
 exports.AuthService = AuthService;
 exports.AuthService = AuthService = __decorate([
     (0, common_1.Injectable)(),
-    __metadata("design:paramtypes", [users_service_1.UsersService,
+    __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         jwt_1.JwtService])
 ], AuthService);
