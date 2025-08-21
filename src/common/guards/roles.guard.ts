@@ -1,32 +1,49 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
+import { TenantRole } from '@prisma/client';
 import { ROLES_KEY } from '../decorators/roles.decorator';
+
+type SystemRole = 'SUPERADMIN' | 'SUPPORT' | 'NONE';
+
+interface AuthUser {
+  // do payload montado no JwtStrategy
+  userId: string;
+  systemRole?: SystemRole | null;  // papel global
+  tenantId?: string | null;        // resolvido pelo middleware
+  role?: TenantRole | null;        // papel no tenant atual
+}
 
 @Injectable()
 export class RolesGuard implements CanActivate {
-  constructor(private reflector: Reflector) {}
+  constructor(private readonly reflector: Reflector) {}
 
-  canActivate(context: ExecutionContext): boolean {
-    const requiredRoles = this.reflector.getAllAndOverride<string[]>(ROLES_KEY, [
-      context.getHandler(),
-      context.getClass(),
+  canActivate(ctx: ExecutionContext): boolean {
+    // Ex.: @Roles('ADMIN','MODERATOR')
+    const required = this.reflector.getAllAndOverride<string[]>(ROLES_KEY, [
+      ctx.getHandler(),
+      ctx.getClass(),
     ]);
-    if (!requiredRoles) return true;
 
-    const { user } = context.switchToHttp().getRequest();
-    return requiredRoles.includes(user.role);
+    // Se a rota não exigiu roles, permite
+    if (!required || required.length === 0) return true;
+
+    const req = ctx.switchToHttp().getRequest();
+    const user = req.user as AuthUser | undefined;
+
+    if (!user) return false;
+
+    // SUPERADMIN tem passe livre (desde que o tenant middleware
+    // já tenha resolvido X-Tenant-Id quando necessário)
+    if (user.systemRole === 'SUPERADMIN') return true;
+
+    // Se não tem role de tenant, nega
+    if (!user.role) return false;
+
+    // Normaliza os roles exigidos (strings) para o enum do Prisma
+    const requiredEnumRoles = required.map(
+      r => r.toUpperCase() as keyof typeof TenantRole
+    );
+
+    return requiredEnumRoles.includes(user.role);
   }
 }
-
- //Example usage in a controller
-/*import { UseGuards } from '@nestjs/common';
-import { Roles } from 'src/common/decorators/roles.decorator';
-import { RolesGuard } from 'src/common/guards/roles.guard';
-
-@UseGuards(RolesGuard)
-@Roles('admin')
-@Get('secure-data')
-getSecureData() {
-  return 'Only admins can see this';
-}
-*/

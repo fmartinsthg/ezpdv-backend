@@ -5,7 +5,7 @@ import {
   BadRequestException,
   ForbiddenException,
 } from '@nestjs/common';
-import { Prisma, TenantRole } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProductsQueryDto } from './dto/products-query.dto';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -16,12 +16,13 @@ import { AuthUser } from '../auth/jwt.strategy';
 export class ProductsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Type guard para evitar o erro TS2345 em includes */
-  private canManage(role?: TenantRole | null): boolean {
-    return role === TenantRole.ADMIN || role === TenantRole.MODERATOR;
+  /** Evita erro TS em comparação de enum/literal — compara por string */
+  private canManage(role?: AuthUser['role'] | null): boolean {
+    const r = role ? String(role) : '';
+    return r === 'ADMIN' || r === 'MODERATOR';
   }
 
-  async findAll(user: AuthUser, query: ProductsQueryDto) {
+  async findAll(tenantId: string, query: ProductsQueryDto) {
     const {
       q,
       categoryId,
@@ -35,10 +36,9 @@ export class ProductsService {
     const take = Math.min(Number(limit) || 10, 100);
     const skip = (Number(page) - 1) * take;
 
-    const where: Prisma.ProductWhereInput = {
-      tenantId: user.tenantId!,
-    };
+    const where: Prisma.ProductWhereInput = { tenantId };
 
+    // busca textual
     if (q && q.trim().length > 0) {
       where.OR = [
         { name: { contains: q, mode: 'insensitive' } },
@@ -47,14 +47,21 @@ export class ProductsService {
       ];
     }
 
+    // filtro por categoria
     if (categoryId) {
       where.categoryId = categoryId;
     }
 
+    // filtro por ativo
     if (isActive !== undefined) {
-      where.isActive = isActive === 'true';
+      if (typeof isActive === 'boolean') {
+        where.isActive = isActive;
+      } else if (typeof isActive === 'string') {
+        where.isActive = isActive.toLowerCase() === 'true';
+      }
     }
 
+    // ordenação
     const orderBy: Prisma.ProductOrderByWithRelationInput = {
       [sortBy]: sortOrder,
     };
@@ -81,23 +88,25 @@ export class ProductsService {
     };
   }
 
-  async findOne(user: AuthUser, id: string) {
+  async findOne(tenantId: string, id: string) {
     const product = await this.prisma.product.findFirst({
-      where: { id, tenantId: user.tenantId! },
+      where: { id, tenantId },
       include: { category: { select: { id: true, name: true } } },
     });
     if (!product) throw new NotFoundException('Produto não encontrado');
     return product;
   }
 
-  async create(user: AuthUser, data: CreateProductDto) {
+  async create(user: AuthUser, tenantId: string, data: CreateProductDto) {
     if (!this.canManage(user.role)) {
       throw new ForbiddenException('Sem permissão para criar produtos.');
     }
 
+    // valida categoria dentro do tenant (se enviada)
     if (data.categoryId) {
       const category = await this.prisma.category.findFirst({
-        where: { id: data.categoryId, tenantId: user.tenantId! },
+        where: { id: data.categoryId, tenantId },
+        select: { id: true },
       });
       if (!category) {
         throw new NotFoundException(
@@ -109,7 +118,7 @@ export class ProductsService {
     try {
       return await this.prisma.product.create({
         data: {
-          tenantId: user.tenantId!,
+          tenantId, // obrigatório no multi-tenant
           name: data.name,
           description: data.description,
           price: new Prisma.Decimal(
@@ -132,22 +141,31 @@ export class ProductsService {
         throw new NotFoundException('Categoria informada não existe.');
       }
       if (err.code === 'P2002') {
+        // unique (tenantId, name) ou (tenantId, barcode)
         throw new BadRequestException('Dados duplicados para este restaurante.');
       }
       throw err;
     }
   }
 
-  async update(user: AuthUser, id: string, data: UpdateProductDto) {
+  async update(
+    user: AuthUser,
+    tenantId: string,
+    id: string,
+    data: UpdateProductDto,
+  ) {
     if (!this.canManage(user.role)) {
       throw new ForbiddenException('Sem permissão para atualizar produtos.');
     }
 
-    await this.findOne(user, id);
+    // garante escopo (existe no tenant)
+    await this.findOne(tenantId, id);
 
+    // valida nova categoria (se informada)
     if (data.categoryId) {
       const category = await this.prisma.category.findFirst({
-        where: { id: data.categoryId, tenantId: user.tenantId! },
+        where: { id: data.categoryId, tenantId },
+        select: { id: true },
       });
       if (!category) {
         throw new NotFoundException(
@@ -161,7 +179,8 @@ export class ProductsService {
         name: data.name,
         description: data.description,
         stock: data.stock,
-        isActive: data.isActive, // agora compila: DTO tem isActive?
+        // `isActive` é opcional no DTO; só aplica se veio definido
+        ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
       };
 
       if (data.categoryId !== undefined) {
@@ -203,12 +222,13 @@ export class ProductsService {
     }
   }
 
-  async delete(user: AuthUser, id: string) {
+  async delete(user: AuthUser, tenantId: string, id: string) {
     if (!this.canManage(user.role)) {
       throw new ForbiddenException('Sem permissão para remover produtos.');
     }
 
-    await this.findOne(user, id);
+    // garante escopo (existe no tenant)
+    await this.findOne(tenantId, id);
 
     try {
       return await this.prisma.product.delete({ where: { id } });

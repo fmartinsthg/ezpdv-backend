@@ -17,11 +17,12 @@ class ProductsQueryDto {
 exports.ProductsQueryDto = ProductsQueryDto;
 __decorate([
     (0, class_validator_1.IsOptional)(),
+    (0, class_transformer_1.Transform)(({ value }) => (typeof value === 'string' ? value.trim() : value)),
     __metadata("design:type", String)
 ], ProductsQueryDto.prototype, "q", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
-    (0, class_validator_1.IsUUID)(),
+    (0, class_validator_1.IsUUID)('4', { message: 'categoryId deve ser um UUID v4 válido.' }),
     __metadata("design:type", String)
 ], ProductsQueryDto.prototype, "categoryId", void 0);
 __decorate([

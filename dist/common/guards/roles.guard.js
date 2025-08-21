@@ -17,15 +17,29 @@ let RolesGuard = class RolesGuard {
     constructor(reflector) {
         this.reflector = reflector;
     }
-    canActivate(context) {
-        const requiredRoles = this.reflector.getAllAndOverride(roles_decorator_1.ROLES_KEY, [
-            context.getHandler(),
-            context.getClass(),
+    canActivate(ctx) {
+        // Ex.: @Roles('ADMIN','MODERATOR')
+        const required = this.reflector.getAllAndOverride(roles_decorator_1.ROLES_KEY, [
+            ctx.getHandler(),
+            ctx.getClass(),
         ]);
-        if (!requiredRoles)
+        // Se a rota não exigiu roles, permite
+        if (!required || required.length === 0)
             return true;
-        const { user } = context.switchToHttp().getRequest();
-        return requiredRoles.includes(user.role);
+        const req = ctx.switchToHttp().getRequest();
+        const user = req.user;
+        if (!user)
+            return false;
+        // SUPERADMIN tem passe livre (desde que o tenant middleware
+        // já tenha resolvido X-Tenant-Id quando necessário)
+        if (user.systemRole === 'SUPERADMIN')
+            return true;
+        // Se não tem role de tenant, nega
+        if (!user.role)
+            return false;
+        // Normaliza os roles exigidos (strings) para o enum do Prisma
+        const requiredEnumRoles = required.map(r => r.toUpperCase());
+        return requiredEnumRoles.includes(user.role);
     }
 };
 exports.RolesGuard = RolesGuard;
@@ -33,15 +47,3 @@ exports.RolesGuard = RolesGuard = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [core_1.Reflector])
 ], RolesGuard);
-//Example usage in a controller
-/*import { UseGuards } from '@nestjs/common';
-import { Roles } from 'src/common/decorators/roles.decorator';
-import { RolesGuard } from 'src/common/guards/roles.guard';
-
-@UseGuards(RolesGuard)
-@Roles('admin')
-@Get('secure-data')
-getSecureData() {
-  return 'Only admins can see this';
-}
-*/ 

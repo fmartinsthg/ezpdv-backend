@@ -6,18 +6,18 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PlatformModule = void 0;
-// src/platform/platform.module.ts
+exports.TenantUsersModule = void 0;
 const common_1 = require("@nestjs/common");
-const prisma_module_1 = require("../prisma/prisma.module");
-const tenants_module_1 = require("./tenants/tenants.module");
-const memberships_module_1 = require("./memberships/memberships.module");
-const tenant_users_module_1 = require("./tenants/users/tenant-users.module");
-let PlatformModule = class PlatformModule {
+const prisma_module_1 = require("../../../prisma/prisma.module");
+const tenant_users_controller_1 = require("./tenant-users.controller");
+const tenant_users_service_1 = require("./tenant-users.service");
+let TenantUsersModule = class TenantUsersModule {
 };
-exports.PlatformModule = PlatformModule;
-exports.PlatformModule = PlatformModule = __decorate([
+exports.TenantUsersModule = TenantUsersModule;
+exports.TenantUsersModule = TenantUsersModule = __decorate([
     (0, common_1.Module)({
-        imports: [prisma_module_1.PrismaModule, tenants_module_1.TenantsModule, memberships_module_1.MembershipsModule, tenant_users_module_1.TenantUsersModule],
+        imports: [prisma_module_1.PrismaModule],
+        controllers: [tenant_users_controller_1.TenantUsersController],
+        providers: [tenant_users_service_1.TenantUsersService],
     })
-], PlatformModule);
+], TenantUsersModule);

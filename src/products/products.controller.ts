@@ -1,4 +1,3 @@
-// src/products/products.controller.ts
 import {
   Controller,
   Get,
@@ -10,6 +9,7 @@ import {
   UseGuards,
   ParseUUIDPipe,
   Query,
+  Headers,
 } from '@nestjs/common';
 import { ProductsService } from './products.service';
 import { JwtAuthGuard } from '../auth/jwt.guard';
@@ -18,6 +18,7 @@ import { UpdateProductDto } from './dto/update-product.dto';
 import { ProductsQueryDto } from './dto/products-query.dto';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../auth/jwt.strategy';
+import { resolveEffectiveTenantId } from '../common/tenant/tenant.util';
 
 // Swagger (opcional)
 import {
@@ -46,9 +47,11 @@ export class ProductsController {
   @Get()
   async findAll(
     @CurrentUser() user: AuthUser,
+    @Headers() headers: Record<string, string>,
     @Query() query: ProductsQueryDto,
   ) {
-    return this.productsService.findAll(user, query);
+    const tenantId = resolveEffectiveTenantId(user, headers['x-tenant-id']);
+    return this.productsService.findAll(tenantId, query);
   }
 
   @ApiOperation({ summary: 'Obter produto por ID' })
@@ -57,9 +60,11 @@ export class ProductsController {
   @Get(':id')
   async findOne(
     @CurrentUser() user: AuthUser,
+    @Headers() headers: Record<string, string>,
     @Param('id', new ParseUUIDPipe()) id: string,
   ) {
-    return this.productsService.findOne(user, id);
+    const tenantId = resolveEffectiveTenantId(user, headers['x-tenant-id']);
+    return this.productsService.findOne(tenantId, id);
   }
 
   @ApiOperation({ summary: 'Criar produto' })
@@ -69,9 +74,11 @@ export class ProductsController {
   @Post()
   async create(
     @CurrentUser() user: AuthUser,
+    @Headers() headers: Record<string, string>,
     @Body() data: CreateProductDto,
   ) {
-    return this.productsService.create(user, data);
+    const tenantId = resolveEffectiveTenantId(user, headers['x-tenant-id']);
+    return this.productsService.create(user, tenantId, data);
   }
 
   @ApiOperation({ summary: 'Atualizar produto' })
@@ -84,10 +91,12 @@ export class ProductsController {
   @Patch(':id')
   async update(
     @CurrentUser() user: AuthUser,
+    @Headers() headers: Record<string, string>,
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() data: UpdateProductDto,
   ) {
-    return this.productsService.update(user, id, data);
+    const tenantId = resolveEffectiveTenantId(user, headers['x-tenant-id']);
+    return this.productsService.update(user, tenantId, id, data);
   }
 
   @ApiOperation({ summary: 'Excluir produto' })
@@ -97,8 +106,10 @@ export class ProductsController {
   @Delete(':id')
   async delete(
     @CurrentUser() user: AuthUser,
+    @Headers() headers: Record<string, string>,
     @Param('id', new ParseUUIDPipe()) id: string,
   ) {
-    return this.productsService.delete(user, id);
+    const tenantId = resolveEffectiveTenantId(user, headers['x-tenant-id']);
+    return this.productsService.delete(user, tenantId, id);
   }
 }

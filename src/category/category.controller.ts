@@ -8,120 +8,181 @@ import {
   Body,
   UseGuards,
   Query,
-} from '@nestjs/common';
-import { CategoryService } from './category.service';
-import { JwtAuthGuard } from '../auth/jwt.guard';
-import { RolesGuard } from '../auth/roles.guard';
-import { Roles } from '../auth/roles.decorator';
-import { CreateCategoryDto } from './dto/create-category.dto';
-import { UpdateCategoryDto } from './dto/update-category.dto';
-import { CategoryPaginationDto } from './dto/pagination-category.dto';
-import { SearchCategoryDto } from './dto/search-category.dto';
-import { CurrentUser } from '../auth/current-user.decorator';
-import { AuthUser } from '../auth/jwt.strategy';
+  ParseUUIDPipe,
+  Headers,
+} from "@nestjs/common";
+import { CategoryService } from "./category.service";
+import { JwtAuthGuard } from "../auth/jwt.guard";
+import { RolesGuard } from "../auth/roles.guard";
+import { Roles } from "../auth/roles.decorator";
+import { CreateCategoryDto } from "./dto/create-category.dto";
+import { UpdateCategoryDto } from "./dto/update-category.dto";
+import { CategoryPaginationDto } from "./dto/pagination-category.dto";
+import { SearchCategoryDto } from "./dto/search-category.dto";
+import { CurrentUser } from "../auth/current-user.decorator";
+import { AuthUser } from "../auth/jwt.strategy";
+import { resolveEffectiveTenantId } from "../common/tenant/tenant.util";
 
-@Controller('categories')
 @UseGuards(JwtAuthGuard)
+@Controller("categories")
 export class CategoryController {
   constructor(private readonly categoryService: CategoryService) {}
 
-  // Basic CRUD Operations
+  // Listagem simples
   @Get()
-  async findAll(@CurrentUser() user: AuthUser) {
-    return await this.categoryService.findAll(user);
+  async findAll(
+    @CurrentUser() user: AuthUser,
+    @Headers() headers: Record<string, string>
+  ) {
+    const tenantId = resolveEffectiveTenantId(user, headers["x-tenant-id"]);
+    return await this.categoryService.findAll(tenantId);
   }
 
-@Get('paginated')
+  // Listagem paginada
+  @Get("paginated")
   async findAllPaginated(
     @CurrentUser() user: AuthUser,
-    @Query() paginationDto: CategoryPaginationDto,
+    @Headers() headers: Record<string, string>,
+    @Query() paginationDto: CategoryPaginationDto
   ) {
-    return await this.categoryService.findAllPaginated(user, paginationDto);
+    const tenantId = resolveEffectiveTenantId(user, headers["x-tenant-id"]);
+    return await this.categoryService.findAllPaginated(tenantId, paginationDto);
   }
 
-  @Get(':id')
-  async findOne(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return await this.categoryService.findOne(user, id);
+  @Get(":id")
+  async findOne(
+    @CurrentUser() user: AuthUser,
+    @Headers() headers: Record<string, string>,
+    @Param("id", new ParseUUIDPipe()) id: string
+  ) {
+    const tenantId = resolveEffectiveTenantId(user, headers["x-tenant-id"]);
+    return await this.categoryService.findOne(tenantId, id);
   }
 
-  @Get(':id/products')
-  async findWithProducts(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return await this.categoryService.findWithProducts(user, id);
+  @Get(":id/products")
+  async findWithProducts(
+    @CurrentUser() user: AuthUser,
+    @Headers() headers: Record<string, string>,
+    @Param("id", new ParseUUIDPipe()) id: string
+  ) {
+    const tenantId = resolveEffectiveTenantId(user, headers["x-tenant-id"]);
+    return await this.categoryService.findWithProducts(tenantId, id);
   }
 
-  @Get('active/with-count')
-  async getActiveCategoriesWithProductCount(@CurrentUser() user: AuthUser) {
-    return await this.categoryService.getActiveCategoriesWithProductCount(user);
+  @Get("active/with-count")
+  async getActiveCategoriesWithProductCount(
+    @CurrentUser() user: AuthUser,
+    @Headers() headers: Record<string, string>
+  ) {
+    const tenantId = resolveEffectiveTenantId(user, headers["x-tenant-id"]);
+    return await this.categoryService.getActiveCategoriesWithProductCount(
+      tenantId
+    );
   }
 
   @Post()
-  @Roles('ADMIN', 'MODERATOR')
+  @Roles("ADMIN", "MODERATOR")
   @UseGuards(RolesGuard)
-  async create(@CurrentUser() user: AuthUser, @Body() data: CreateCategoryDto) {
-    return await this.categoryService.create(user, data);
+  async create(
+    @CurrentUser() user: AuthUser,
+    @Headers() headers: Record<string, string>,
+    @Body() data: CreateCategoryDto
+  ) {
+    const tenantId = resolveEffectiveTenantId(user, headers["x-tenant-id"]);
+    return await this.categoryService.create(user, tenantId, data);
   }
 
-  @Patch(':id')
-  @Roles('ADMIN', 'MODERATOR')
+  @Patch(":id")
+  @Roles("ADMIN", "MODERATOR")
   @UseGuards(RolesGuard)
   async update(
     @CurrentUser() user: AuthUser,
-    @Param('id') id: string,
-    @Body() data: UpdateCategoryDto,
+    @Headers() headers: Record<string, string>,
+    @Param("id", new ParseUUIDPipe()) id: string,
+    @Body() data: UpdateCategoryDto
   ) {
-    return await this.categoryService.update(user, id, data);
+    const tenantId = resolveEffectiveTenantId(user, headers["x-tenant-id"]);
+    return await this.categoryService.update(tenantId, id, data);
   }
 
-  // Status Management
-  @Patch(':id/deactivate')
-  @Roles('ADMIN', 'MODERATOR')
+  // Status
+  @Patch(":id/deactivate")
+  @Roles("ADMIN", "MODERATOR")
   @UseGuards(RolesGuard)
-  async deactivate(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return await this.categoryService.deactivate(user, id);
+  async deactivate(
+    @CurrentUser() user: AuthUser,
+    @Headers() headers: Record<string, string>,
+    @Param("id", new ParseUUIDPipe()) id: string
+  ) {
+    const tenantId = resolveEffectiveTenantId(user, headers["x-tenant-id"]);
+    return await this.categoryService.deactivate(tenantId, id);
   }
 
-  @Patch(':id/activate')
-  @Roles('ADMIN', 'MODERATOR')
+  @Patch(":id/activate")
+  @Roles("ADMIN", "MODERATOR")
   @UseGuards(RolesGuard)
-  async activate(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return await this.categoryService.activate(user, id);
+  async activate(
+    @CurrentUser() user: AuthUser,
+    @Headers() headers: Record<string, string>,
+    @Param("id", new ParseUUIDPipe()) id: string
+  ) {
+    const tenantId = resolveEffectiveTenantId(user, headers["x-tenant-id"]);
+    return await this.categoryService.activate(tenantId, id);
   }
 
-  // Search Operations
-  @Get('search')
+  // Busca
+  @Get("search")
   async search(
     @CurrentUser() user: AuthUser,
-    @Query() searchCategoryDto: SearchCategoryDto,
+    @Headers() headers: Record<string, string>,
+    @Query() searchCategoryDto: SearchCategoryDto
   ) {
-    return await this.categoryService.search(user, searchCategoryDto);
+    const tenantId = resolveEffectiveTenantId(user, headers["x-tenant-id"]);
+    return await this.categoryService.search(tenantId, searchCategoryDto);
   }
 
-  // Delete Operations
-  @Delete(':id')
-  @Roles('ADMIN')
+  // Exclusão
+  @Delete(":id")
+  @Roles("ADMIN")
   @UseGuards(RolesGuard)
-  async delete(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return await this.categoryService.delete(user, id);
+  async delete(
+    @CurrentUser() user: AuthUser,
+    @Headers() headers: Record<string, string>,
+    @Param("id", new ParseUUIDPipe()) id: string
+  ) {
+    const tenantId = resolveEffectiveTenantId(user, headers["x-tenant-id"]);
+    return await this.categoryService.delete(tenantId, id);
   }
 
-  @Delete(':id/safe')
-  @Roles('ADMIN')
+  @Delete(":id/safe")
+  @Roles("ADMIN")
   @UseGuards(RolesGuard)
-  async deleteSafe(@CurrentUser() user: AuthUser, @Param('id') id: string) {
-    return await this.categoryService.deleteSafe(user, id);
+  async deleteSafe(
+    @CurrentUser() user: AuthUser,
+    @Headers() headers: Record<string, string>,
+    @Param("id", new ParseUUIDPipe()) id: string
+  ) {
+    const tenantId = resolveEffectiveTenantId(user, headers["x-tenant-id"]);
+    return await this.categoryService.deleteSafe(tenantId, id);
   }
 
-  // Hierarchy Support
-  @Get(':id/subcategories')
+  // Hierarquia
+  @Get(":id/subcategories")
   async findSubcategories(
     @CurrentUser() user: AuthUser,
-    @Param('id') id: string,
+    @Headers() headers: Record<string, string>,
+    @Param("id", new ParseUUIDPipe()) id: string
   ) {
-    return await this.categoryService.findSubcategories(user, id);
+    const tenantId = resolveEffectiveTenantId(user, headers["x-tenant-id"]);
+    return await this.categoryService.findSubcategories(tenantId, id);
   }
 
-  @Get('hierarchy')
-  async getCategoryHierarchy(@CurrentUser() user: AuthUser) {
-    return await this.categoryService.getCategoryHierarchy(user);
+  @Get("hierarchy")
+  async getCategoryHierarchy(
+    @CurrentUser() user: AuthUser,
+    @Headers() headers: Record<string, string>
+  ) {
+    const tenantId = resolveEffectiveTenantId(user, headers["x-tenant-id"]);
+    return await this.categoryService.getCategoryHierarchy(tenantId);
   }
 }

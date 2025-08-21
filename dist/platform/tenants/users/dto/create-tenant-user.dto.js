@@ -9,15 +9,28 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.UpdateProductDto = void 0;
-const swagger_1 = require("@nestjs/swagger");
-const create_product_dto_1 = require("./create-product.dto");
+exports.CreateTenantUserDto = void 0;
 const class_validator_1 = require("class-validator");
-class UpdateProductDto extends (0, swagger_1.PartialType)(create_product_dto_1.CreateProductDto) {
+const client_1 = require("@prisma/client");
+class CreateTenantUserDto {
 }
-exports.UpdateProductDto = UpdateProductDto;
+exports.CreateTenantUserDto = CreateTenantUserDto;
+__decorate([
+    (0, class_validator_1.IsNotEmpty)(),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateTenantUserDto.prototype, "name", void 0);
+__decorate([
+    (0, class_validator_1.IsEmail)(),
+    __metadata("design:type", String)
+], CreateTenantUserDto.prototype, "email", void 0);
+__decorate([
+    (0, class_validator_1.MinLength)(6),
+    (0, class_validator_1.IsString)(),
+    __metadata("design:type", String)
+], CreateTenantUserDto.prototype, "password", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
-    (0, class_validator_1.IsBoolean)(),
-    __metadata("design:type", Boolean)
-], UpdateProductDto.prototype, "isActive", void 0);
+    (0, class_validator_1.IsEnum)(client_1.TenantRole),
+    __metadata("design:type", String)
+], CreateTenantUserDto.prototype, "role", void 0);

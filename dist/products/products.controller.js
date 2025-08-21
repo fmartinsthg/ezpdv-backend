@@ -13,7 +13,6 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ProductsController = void 0;
-// src/products/products.controller.ts
 const common_1 = require("@nestjs/common");
 const products_service_1 = require("./products.service");
 const jwt_guard_1 = require("../auth/jwt.guard");
@@ -21,6 +20,7 @@ const create_product_dto_1 = require("./dto/create-product.dto");
 const update_product_dto_1 = require("./dto/update-product.dto");
 const products_query_dto_1 = require("./dto/products-query.dto");
 const current_user_decorator_1 = require("../auth/current-user.decorator");
+const tenant_util_1 = require("../common/tenant/tenant.util");
 // Swagger (opcional)
 const swagger_1 = require("@nestjs/swagger");
 // Roles (use o caminho que você já está usando no projeto)
@@ -30,20 +30,25 @@ let ProductsController = class ProductsController {
     constructor(productsService) {
         this.productsService = productsService;
     }
-    async findAll(user, query) {
-        return this.productsService.findAll(user, query);
+    async findAll(user, headers, query) {
+        const tenantId = (0, tenant_util_1.resolveEffectiveTenantId)(user, headers['x-tenant-id']);
+        return this.productsService.findAll(tenantId, query);
     }
-    async findOne(user, id) {
-        return this.productsService.findOne(user, id);
+    async findOne(user, headers, id) {
+        const tenantId = (0, tenant_util_1.resolveEffectiveTenantId)(user, headers['x-tenant-id']);
+        return this.productsService.findOne(tenantId, id);
     }
-    async create(user, data) {
-        return this.productsService.create(user, data);
+    async create(user, headers, data) {
+        const tenantId = (0, tenant_util_1.resolveEffectiveTenantId)(user, headers['x-tenant-id']);
+        return this.productsService.create(user, tenantId, data);
     }
-    async update(user, id, data) {
-        return this.productsService.update(user, id, data);
+    async update(user, headers, id, data) {
+        const tenantId = (0, tenant_util_1.resolveEffectiveTenantId)(user, headers['x-tenant-id']);
+        return this.productsService.update(user, tenantId, id, data);
     }
-    async delete(user, id) {
-        return this.productsService.delete(user, id);
+    async delete(user, headers, id) {
+        const tenantId = (0, tenant_util_1.resolveEffectiveTenantId)(user, headers['x-tenant-id']);
+        return this.productsService.delete(user, tenantId, id);
     }
 };
 exports.ProductsController = ProductsController;
@@ -55,9 +60,10 @@ __decorate([
     }),
     (0, common_1.Get)(),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
-    __param(1, (0, common_1.Query)()),
+    __param(1, (0, common_1.Headers)()),
+    __param(2, (0, common_1.Query)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, products_query_dto_1.ProductsQueryDto]),
+    __metadata("design:paramtypes", [Object, Object, products_query_dto_1.ProductsQueryDto]),
     __metadata("design:returntype", Promise)
 ], ProductsController.prototype, "findAll", null);
 __decorate([
@@ -66,9 +72,10 @@ __decorate([
     (0, swagger_1.ApiResponse)({ status: 404, description: 'Produto não encontrado.' }),
     (0, common_1.Get)(':id'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
-    __param(1, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __param(1, (0, common_1.Headers)()),
+    __param(2, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:paramtypes", [Object, Object, String]),
     __metadata("design:returntype", Promise)
 ], ProductsController.prototype, "findOne", null);
 __decorate([
@@ -78,9 +85,10 @@ __decorate([
     (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR'),
     (0, common_1.Post)(),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
-    __param(1, (0, common_1.Body)()),
+    __param(1, (0, common_1.Headers)()),
+    __param(2, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, create_product_dto_1.CreateProductDto]),
+    __metadata("design:paramtypes", [Object, Object, create_product_dto_1.CreateProductDto]),
     __metadata("design:returntype", Promise)
 ], ProductsController.prototype, "create", null);
 __decorate([
@@ -93,10 +101,11 @@ __decorate([
     (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR'),
     (0, common_1.Patch)(':id'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
-    __param(1, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
-    __param(2, (0, common_1.Body)()),
+    __param(1, (0, common_1.Headers)()),
+    __param(2, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __param(3, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String, update_product_dto_1.UpdateProductDto]),
+    __metadata("design:paramtypes", [Object, Object, String, update_product_dto_1.UpdateProductDto]),
     __metadata("design:returntype", Promise)
 ], ProductsController.prototype, "update", null);
 __decorate([
@@ -106,9 +115,10 @@ __decorate([
     (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR'),
     (0, common_1.Delete)(':id'),
     __param(0, (0, current_user_decorator_1.CurrentUser)()),
-    __param(1, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __param(1, (0, common_1.Headers)()),
+    __param(2, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:paramtypes", [Object, Object, String]),
     __metadata("design:returntype", Promise)
 ], ProductsController.prototype, "delete", null);
 exports.ProductsController = ProductsController = __decorate([

@@ -18,17 +18,17 @@ let ProductsService = class ProductsService {
     constructor(prisma) {
         this.prisma = prisma;
     }
-    /** Type guard para evitar o erro TS2345 em includes */
+    /** Evita erro TS em comparação de enum/literal — compara por string */
     canManage(role) {
-        return role === client_1.TenantRole.ADMIN || role === client_1.TenantRole.MODERATOR;
+        const r = role ? String(role) : '';
+        return r === 'ADMIN' || r === 'MODERATOR';
     }
-    async findAll(user, query) {
+    async findAll(tenantId, query) {
         const { q, categoryId, isActive, sortBy = 'name', sortOrder = 'asc', page = 1, limit = 10, } = query;
         const take = Math.min(Number(limit) || 10, 100);
         const skip = (Number(page) - 1) * take;
-        const where = {
-            tenantId: user.tenantId,
-        };
+        const where = { tenantId };
+        // busca textual
         if (q && q.trim().length > 0) {
             where.OR = [
                 { name: { contains: q, mode: 'insensitive' } },
@@ -36,12 +36,20 @@ let ProductsService = class ProductsService {
                 { barcode: { contains: q, mode: 'insensitive' } },
             ];
         }
+        // filtro por categoria
         if (categoryId) {
             where.categoryId = categoryId;
         }
+        // filtro por ativo
         if (isActive !== undefined) {
-            where.isActive = isActive === 'true';
+            if (typeof isActive === 'boolean') {
+                where.isActive = isActive;
+            }
+            else if (typeof isActive === 'string') {
+                where.isActive = isActive.toLowerCase() === 'true';
+            }
         }
+        // ordenação
         const orderBy = {
             [sortBy]: sortOrder,
         };
@@ -65,22 +73,24 @@ let ProductsService = class ProductsService {
             sortOrder,
         };
     }
-    async findOne(user, id) {
+    async findOne(tenantId, id) {
         const product = await this.prisma.product.findFirst({
-            where: { id, tenantId: user.tenantId },
+            where: { id, tenantId },
             include: { category: { select: { id: true, name: true } } },
         });
         if (!product)
             throw new common_1.NotFoundException('Produto não encontrado');
         return product;
     }
-    async create(user, data) {
+    async create(user, tenantId, data) {
         if (!this.canManage(user.role)) {
             throw new common_1.ForbiddenException('Sem permissão para criar produtos.');
         }
+        // valida categoria dentro do tenant (se enviada)
         if (data.categoryId) {
             const category = await this.prisma.category.findFirst({
-                where: { id: data.categoryId, tenantId: user.tenantId },
+                where: { id: data.categoryId, tenantId },
+                select: { id: true },
             });
             if (!category) {
                 throw new common_1.NotFoundException('Categoria não encontrada para este restaurante.');
@@ -89,7 +99,7 @@ let ProductsService = class ProductsService {
         try {
             return await this.prisma.product.create({
                 data: {
-                    tenantId: user.tenantId,
+                    tenantId, // obrigatório no multi-tenant
                     name: data.name,
                     description: data.description,
                     price: new client_1.Prisma.Decimal(typeof data.price === 'string' ? data.price : String(data.price)),
@@ -109,19 +119,23 @@ let ProductsService = class ProductsService {
                 throw new common_1.NotFoundException('Categoria informada não existe.');
             }
             if (err.code === 'P2002') {
+                // unique (tenantId, name) ou (tenantId, barcode)
                 throw new common_1.BadRequestException('Dados duplicados para este restaurante.');
             }
             throw err;
         }
     }
-    async update(user, id, data) {
+    async update(user, tenantId, id, data) {
         if (!this.canManage(user.role)) {
             throw new common_1.ForbiddenException('Sem permissão para atualizar produtos.');
         }
-        await this.findOne(user, id);
+        // garante escopo (existe no tenant)
+        await this.findOne(tenantId, id);
+        // valida nova categoria (se informada)
         if (data.categoryId) {
             const category = await this.prisma.category.findFirst({
-                where: { id: data.categoryId, tenantId: user.tenantId },
+                where: { id: data.categoryId, tenantId },
+                select: { id: true },
             });
             if (!category) {
                 throw new common_1.NotFoundException('Categoria informada não existe neste restaurante.');
@@ -132,7 +146,8 @@ let ProductsService = class ProductsService {
                 name: data.name,
                 description: data.description,
                 stock: data.stock,
-                isActive: data.isActive, // agora compila: DTO tem isActive?
+                // `isActive` é opcional no DTO; só aplica se veio definido
+                ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
             };
             if (data.categoryId !== undefined) {
                 payload.category = data.categoryId
@@ -167,11 +182,12 @@ let ProductsService = class ProductsService {
             throw err;
         }
     }
-    async delete(user, id) {
+    async delete(user, tenantId, id) {
         if (!this.canManage(user.role)) {
             throw new common_1.ForbiddenException('Sem permissão para remover produtos.');
         }
-        await this.findOne(user, id);
+        // garante escopo (existe no tenant)
+        await this.findOne(tenantId, id);
         try {
             return await this.prisma.product.delete({ where: { id } });
         }
