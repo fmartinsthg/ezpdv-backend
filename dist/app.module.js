@@ -9,8 +9,12 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AppModule = void 0;
 // src/app.module.ts
 const common_1 = require("@nestjs/common");
+const core_1 = require("@nestjs/core");
 const config_1 = require("@nestjs/config");
 const app_controller_1 = require("./app.controller");
+const jwt_guard_1 = require("./auth/jwt.guard");
+const roles_guard_1 = require("./auth/roles.guard");
+const tenant_1 = require("./common/tenant");
 const users_module_1 = require("./users/users.module");
 const products_module_1 = require("./products/products.module");
 const orders_module_1 = require("./orders/orders.module");
@@ -36,6 +40,11 @@ exports.AppModule = AppModule = __decorate([
             platform_module_1.PlatformModule,
         ],
         controllers: [app_controller_1.AppController],
-        providers: [],
+        providers: [
+            { provide: core_1.APP_GUARD, useClass: jwt_guard_1.JwtAuthGuard },
+            { provide: core_1.APP_GUARD, useClass: roles_guard_1.RolesGuard },
+            { provide: core_1.APP_GUARD, useClass: tenant_1.TenantContextGuard },
+            { provide: core_1.APP_INTERCEPTOR, useClass: tenant_1.TenantRouteValidationInterceptor },
+        ],
     })
 ], AppModule);

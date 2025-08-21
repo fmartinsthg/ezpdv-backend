@@ -1,7 +1,14 @@
 // src/app.module.ts
 import { Module } from "@nestjs/common";
+import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
 import { ConfigModule } from "@nestjs/config";
 import { AppController } from "./app.controller";
+import { JwtAuthGuard } from "./auth/jwt.guard";
+import { RolesGuard } from "./auth/roles.guard";
+import {
+  TenantContextGuard,
+  TenantRouteValidationInterceptor,
+} from "./common/tenant";
 import { UsersModule } from "./users/users.module";
 import { ProductsModule } from "./products/products.module";
 import { OrdersModule } from "./orders/orders.module";
@@ -24,6 +31,11 @@ import { PlatformModule } from "./platform/platform.module";
     PlatformModule,
   ],
   controllers: [AppController],
-  providers: [],
+  providers: [
+    { provide: APP_GUARD, useClass: JwtAuthGuard },
+    { provide: APP_GUARD, useClass: RolesGuard },
+    { provide: APP_GUARD, useClass: TenantContextGuard },
+    { provide: APP_INTERCEPTOR, useClass: TenantRouteValidationInterceptor },
+  ],
 })
 export class AppModule {}
