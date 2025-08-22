@@ -18,3 +18,4 @@ __exportStar(require("./tenant.constants"), exports);
 __exportStar(require("./tenant.decorator"), exports);
 __exportStar(require("./tenant-context.guard"), exports);
 __exportStar(require("./tenant-context.interceptor"), exports);
+__exportStar(require("./skip-tenant.decorator"), exports);

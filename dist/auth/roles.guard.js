@@ -13,16 +13,46 @@ exports.RolesGuard = void 0;
 const common_1 = require("@nestjs/common");
 const core_1 = require("@nestjs/core");
 const roles_decorator_1 = require("./roles.decorator");
+const public_decorator_1 = require("../common/decorators/public.decorator");
 let RolesGuard = class RolesGuard {
     constructor(reflector) {
         this.reflector = reflector;
     }
     canActivate(context) {
-        const requiredRoles = this.reflector.getAllAndOverride(roles_decorator_1.ROLES_KEY, [context.getHandler(), context.getClass()]);
-        if (!requiredRoles)
+        // Rotas públicas não exigem papel
+        const isPublic = this.reflector.getAllAndOverride(public_decorator_1.IS_PUBLIC_KEY, [
+            context.getHandler(),
+            context.getClass(),
+        ]);
+        if (isPublic)
             return true;
-        const { user } = context.switchToHttp().getRequest();
-        return requiredRoles.includes(user.role);
+        const requiredRoles = this.reflector.getAllAndOverride(roles_decorator_1.ROLES_KEY, [
+            context.getHandler(),
+            context.getClass(),
+        ]) || [];
+        if (requiredRoles.length === 0)
+            return true;
+        const req = context.switchToHttp().getRequest();
+        const user = (req?.user || {});
+        // Colete papéis potenciais do token (plataforma + tenant + array)
+        const tokenRoles = new Set();
+        if (user.role)
+            tokenRoles.add(String(user.role).toUpperCase());
+        if (user.systemRole)
+            tokenRoles.add(String(user.systemRole).toUpperCase());
+        if (Array.isArray(user.roles)) {
+            for (const r of user.roles) {
+                if (r)
+                    tokenRoles.add(String(r).toUpperCase());
+            }
+        }
+        if (tokenRoles.size === 0)
+            return false;
+        // SUPERADMIN como superuser: tem passe livre em qualquer rota
+        if (tokenRoles.has('SUPERADMIN'))
+            return true;
+        // Caso-insensível
+        return requiredRoles.some((r) => tokenRoles.has(String(r).toUpperCase()));
     }
 };
 exports.RolesGuard = RolesGuard;

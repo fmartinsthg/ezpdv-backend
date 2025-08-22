@@ -13,64 +13,66 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.TenantsController = void 0;
-// src/platform/tenants/tenants.controller.ts
 const common_1 = require("@nestjs/common");
 const jwt_guard_1 = require("../../auth/jwt.guard");
-const current_user_decorator_1 = require("../../auth/current-user.decorator");
+const roles_guard_1 = require("../../auth/roles.guard");
+const roles_decorator_1 = require("../../auth/roles.decorator");
+const tenant_1 = require("../../common/tenant"); // exportado pelo barrel index.ts do tenant
 const tenants_service_1 = require("./tenants.service");
 const create_tenant_dto_1 = require("./dto/create-tenant.dto");
 const update_tenant_dto_1 = require("./dto/update-tenant.dto");
+const swagger_1 = require("@nestjs/swagger");
 let TenantsController = class TenantsController {
     constructor(tenantsService) {
         this.tenantsService = tenantsService;
     }
-    ensureSuperAdmin(user) {
-        if (user.systemRole !== 'SUPERADMIN') {
-            throw new common_1.ForbiddenException('Acesso restrito ao SUPERADMIN.');
-        }
-    }
-    create(user, dto) {
-        this.ensureSuperAdmin(user);
+    create(dto) {
         return this.tenantsService.create(dto);
     }
-    findAll(user, page, limit) {
-        this.ensureSuperAdmin(user);
+    findAll(page, limit) {
         return this.tenantsService.findAll(Number(page) || 1, Number(limit) || 10);
     }
-    update(user, id, dto) {
-        this.ensureSuperAdmin(user);
+    update(id, dto) {
         return this.tenantsService.update(id, dto);
     }
 };
 exports.TenantsController = TenantsController;
 __decorate([
     (0, common_1.Post)(),
-    __param(0, (0, current_user_decorator_1.CurrentUser)()),
-    __param(1, (0, common_1.Body)()),
+    (0, swagger_1.ApiOperation)({ summary: 'Criar tenant (plataforma)' }),
+    __param(0, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, create_tenant_dto_1.CreateTenantDto]),
+    __metadata("design:paramtypes", [create_tenant_dto_1.CreateTenantDto]),
     __metadata("design:returntype", void 0)
 ], TenantsController.prototype, "create", null);
 __decorate([
     (0, common_1.Get)(),
-    __param(0, (0, current_user_decorator_1.CurrentUser)()),
-    __param(1, (0, common_1.Query)('page')),
-    __param(2, (0, common_1.Query)('limit')),
+    (0, swagger_1.ApiOperation)({ summary: 'Listar tenants (plataforma)' }),
+    (0, swagger_1.ApiQuery)({ name: 'page', required: false, type: Number }),
+    (0, swagger_1.ApiQuery)({ name: 'limit', required: false, type: Number }),
+    __param(0, (0, common_1.Query)('page')),
+    __param(1, (0, common_1.Query)('limit')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String, String]),
+    __metadata("design:paramtypes", [String, String]),
     __metadata("design:returntype", void 0)
 ], TenantsController.prototype, "findAll", null);
 __decorate([
     (0, common_1.Patch)(':id'),
-    __param(0, (0, current_user_decorator_1.CurrentUser)()),
-    __param(1, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
-    __param(2, (0, common_1.Body)()),
+    (0, swagger_1.ApiOperation)({ summary: 'Atualizar tenant (plataforma)' }),
+    __param(0, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String, update_tenant_dto_1.UpdateTenantDto]),
+    __metadata("design:paramtypes", [String, update_tenant_dto_1.UpdateTenantDto]),
     __metadata("design:returntype", void 0)
 ], TenantsController.prototype, "update", null);
 exports.TenantsController = TenantsController = __decorate([
-    (0, common_1.UseGuards)(jwt_guard_1.JwtAuthGuard),
+    (0, swagger_1.ApiTags)('tenants'),
+    (0, swagger_1.ApiBearerAuth)(),
+    (0, common_1.UseGuards)(jwt_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard),
+    (0, roles_decorator_1.Roles)('SUPERADMIN') // somente SUPERADMIN opera nivel plataforma
+    ,
+    (0, tenant_1.SkipTenant)() // <<<<<<<<<<<<<< NÃO exigir contexto de tenant nestas rotas
+    ,
     (0, common_1.Controller)('tenants'),
     __metadata("design:paramtypes", [tenants_service_1.TenantsService])
 ], TenantsController);

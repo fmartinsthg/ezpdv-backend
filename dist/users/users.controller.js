@@ -16,31 +16,31 @@ exports.UsersController = void 0;
 const common_1 = require("@nestjs/common");
 const users_service_1 = require("./users.service");
 const jwt_guard_1 = require("../auth/jwt.guard");
-const roles_guard_1 = require("../common/guards/roles.guard");
+const roles_guard_1 = require("../auth/roles.guard");
 const roles_decorator_1 = require("../common/decorators/roles.decorator");
 const current_user_decorator_1 = require("../auth/current-user.decorator");
 const create_user_dto_1 = require("./dto/create-user.dto");
 const update_user_dto_1 = require("./dto/update-user.dto");
-// Swagger (opcional)
+const tenant_decorator_1 = require("../common/tenant/tenant.decorator");
 const swagger_1 = require("@nestjs/swagger");
 let UsersController = class UsersController {
     constructor(usersService) {
         this.usersService = usersService;
     }
-    findAll(user) {
-        return this.usersService.findAll(user);
+    findAll(tenantId, user) {
+        return this.usersService.findAll(user, tenantId);
     }
-    findOne(user, id) {
-        return this.usersService.findById(user, id);
+    findOne(tenantId, user, id) {
+        return this.usersService.findById(user, id, tenantId);
     }
-    create(user, dto) {
-        return this.usersService.create(user, dto);
+    create(tenantId, user, dto) {
+        return this.usersService.create(user, dto, tenantId);
     }
-    update(user, id, dto) {
-        return this.usersService.update(user, id, dto);
+    update(tenantId, user, id, dto) {
+        return this.usersService.update(user, id, dto, tenantId);
     }
-    delete(user, id) {
-        return this.usersService.delete(user, id);
+    delete(tenantId, user, id) {
+        return this.usersService.delete(user, id, tenantId);
     }
 };
 exports.UsersController = UsersController;
@@ -48,9 +48,10 @@ __decorate([
     (0, swagger_1.ApiOperation)({ summary: 'Listar usuários do restaurante' }),
     (0, swagger_1.ApiResponse)({ status: 200 }),
     (0, common_1.Get)(),
-    __param(0, (0, current_user_decorator_1.CurrentUser)()),
+    __param(0, (0, tenant_decorator_1.TenantId)()),
+    __param(1, (0, current_user_decorator_1.CurrentUser)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object]),
+    __metadata("design:paramtypes", [String, Object]),
     __metadata("design:returntype", void 0)
 ], UsersController.prototype, "findAll", null);
 __decorate([
@@ -58,10 +59,11 @@ __decorate([
     (0, swagger_1.ApiResponse)({ status: 200 }),
     (0, swagger_1.ApiResponse)({ status: 404, description: 'Usuário não encontrado' }),
     (0, common_1.Get)(':id'),
-    __param(0, (0, current_user_decorator_1.CurrentUser)()),
-    __param(1, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __param(0, (0, tenant_decorator_1.TenantId)()),
+    __param(1, (0, current_user_decorator_1.CurrentUser)()),
+    __param(2, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:paramtypes", [String, Object, String]),
     __metadata("design:returntype", void 0)
 ], UsersController.prototype, "findOne", null);
 __decorate([
@@ -69,10 +71,11 @@ __decorate([
     (0, swagger_1.ApiResponse)({ status: 201 }),
     (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR'),
     (0, common_1.Post)(),
-    __param(0, (0, current_user_decorator_1.CurrentUser)()),
-    __param(1, (0, common_1.Body)()),
+    __param(0, (0, tenant_decorator_1.TenantId)()),
+    __param(1, (0, current_user_decorator_1.CurrentUser)()),
+    __param(2, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, create_user_dto_1.CreateUserDto]),
+    __metadata("design:paramtypes", [String, Object, create_user_dto_1.CreateUserDto]),
     __metadata("design:returntype", void 0)
 ], UsersController.prototype, "create", null);
 __decorate([
@@ -81,11 +84,12 @@ __decorate([
     (0, swagger_1.ApiResponse)({ status: 404, description: 'Usuário não encontrado' }),
     (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR'),
     (0, common_1.Patch)(':id'),
-    __param(0, (0, current_user_decorator_1.CurrentUser)()),
-    __param(1, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
-    __param(2, (0, common_1.Body)()),
+    __param(0, (0, tenant_decorator_1.TenantId)()),
+    __param(1, (0, current_user_decorator_1.CurrentUser)()),
+    __param(2, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __param(3, (0, common_1.Body)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String, update_user_dto_1.UpdateUserDto]),
+    __metadata("design:paramtypes", [String, Object, String, update_user_dto_1.UpdateUserDto]),
     __metadata("design:returntype", void 0)
 ], UsersController.prototype, "update", null);
 __decorate([
@@ -94,10 +98,11 @@ __decorate([
     (0, swagger_1.ApiResponse)({ status: 404, description: 'Usuário não encontrado' }),
     (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR'),
     (0, common_1.Delete)(':id'),
-    __param(0, (0, current_user_decorator_1.CurrentUser)()),
-    __param(1, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __param(0, (0, tenant_decorator_1.TenantId)()),
+    __param(1, (0, current_user_decorator_1.CurrentUser)()),
+    __param(2, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [Object, String]),
+    __metadata("design:paramtypes", [String, Object, String]),
     __metadata("design:returntype", void 0)
 ], UsersController.prototype, "delete", null);
 exports.UsersController = UsersController = __decorate([

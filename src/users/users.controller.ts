@@ -11,14 +11,14 @@ import {
 } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { JwtAuthGuard } from '../auth/jwt.guard';
-import { RolesGuard } from '../common/guards/roles.guard';
+import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../common/decorators/roles.decorator';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../auth/jwt.strategy';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { TenantId } from '../common/tenant/tenant.decorator';
 
-// Swagger (opcional)
 import { ApiBearerAuth, ApiOperation, ApiResponse, ApiTags } from '@nestjs/swagger';
 
 @ApiTags('users')
@@ -31,8 +31,8 @@ export class UsersController {
   @ApiOperation({ summary: 'Listar usuários do restaurante' })
   @ApiResponse({ status: 200 })
   @Get()
-  findAll(@CurrentUser() user: AuthUser) {
-    return this.usersService.findAll(user);
+  findAll(@TenantId() tenantId: string, @CurrentUser() user: AuthUser) {
+    return this.usersService.findAll(user, tenantId);
   }
 
   @ApiOperation({ summary: 'Obter usuário do restaurante por ID' })
@@ -40,10 +40,11 @@ export class UsersController {
   @ApiResponse({ status: 404, description: 'Usuário não encontrado' })
   @Get(':id')
   findOne(
+    @TenantId() tenantId: string,
     @CurrentUser() user: AuthUser,
     @Param('id', new ParseUUIDPipe()) id: string,
   ) {
-    return this.usersService.findById(user, id);
+    return this.usersService.findById(user, id, tenantId);
   }
 
   @ApiOperation({ summary: 'Criar/vincular usuário ao restaurante' })
@@ -51,10 +52,11 @@ export class UsersController {
   @Roles('ADMIN', 'MODERATOR')
   @Post()
   create(
+    @TenantId() tenantId: string,
     @CurrentUser() user: AuthUser,
     @Body() dto: CreateUserDto,
   ) {
-    return this.usersService.create(user, dto);
+    return this.usersService.create(user, dto, tenantId);
   }
 
   @ApiOperation({ summary: 'Atualizar usuário do restaurante' })
@@ -63,11 +65,12 @@ export class UsersController {
   @Roles('ADMIN', 'MODERATOR')
   @Patch(':id')
   update(
+    @TenantId() tenantId: string,
     @CurrentUser() user: AuthUser,
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: UpdateUserDto,
   ) {
-    return this.usersService.update(user, id, dto);
+    return this.usersService.update(user, id, dto, tenantId);
   }
 
   @ApiOperation({ summary: 'Remover usuário do restaurante (desvincular)' })
@@ -76,9 +79,10 @@ export class UsersController {
   @Roles('ADMIN', 'MODERATOR')
   @Delete(':id')
   delete(
+    @TenantId() tenantId: string,
     @CurrentUser() user: AuthUser,
     @Param('id', new ParseUUIDPipe()) id: string,
   ) {
-    return this.usersService.delete(user, id);
+    return this.usersService.delete(user, id, tenantId);
   }
 }

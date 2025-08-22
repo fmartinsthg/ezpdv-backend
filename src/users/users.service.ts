@@ -3,46 +3,55 @@ import {
   BadRequestException,
   NotFoundException,
   ForbiddenException,
-} from '@nestjs/common';
-import { Prisma, TenantRole, SystemRole } from '@prisma/client';
-import * as bcrypt from 'bcrypt';
-import { PrismaService } from '../prisma/prisma.service';
-import { AuthUser } from '../auth/jwt.strategy';
-import { CreateUserDto } from './dto/create-user.dto';
-import { UpdateUserDto } from './dto/update-user.dto';
+} from "@nestjs/common";
+import { Prisma, TenantRole, SystemRole } from "@prisma/client";
+import * as bcrypt from "bcrypt";
+import { PrismaService } from "../prisma/prisma.service";
+import { AuthUser } from "../auth/jwt.strategy";
+import { CreateUserDto } from "./dto/create-user.dto";
+import { UpdateUserDto } from "./dto/update-user.dto";
 
 @Injectable()
 export class UsersService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Helper: só ADMIN/MODERATOR podem gerenciar usuários do tenant */
-  private canManage(role?: TenantRole | null): boolean {
-    return role === TenantRole.ADMIN || role === TenantRole.MODERATOR;
+  /** ADMIN/MODERATOR podem gerenciar; SUPERADMIN sempre pode */
+  private canManage(user: AuthUser): boolean {
+    if (user.systemRole === SystemRole.SUPERADMIN) return true;
+    return user.role === TenantRole.ADMIN || user.role === TenantRole.MODERATOR;
   }
 
-  /** Helper: resolve tenant alvo da operação */
-  private resolveTargetTenantId(user: AuthUser, dtoTenantId?: string): string {
+  /** Resolve tenant alvo: prioridade ao override do controller (req.tenantId) */
+  private resolveTargetTenantId(
+    user: AuthUser,
+    dtoTenantId?: string,
+    overrideTenantId?: string
+  ): string {
+    if (overrideTenantId) return overrideTenantId;
+
     if (user.systemRole === SystemRole.SUPERADMIN) {
-      // SUPERADMIN precisa de tenantId explícito no token ou dto
       const target = user.tenantId ?? dtoTenantId;
       if (!target) {
         throw new BadRequestException(
-          'SUPERADMIN precisa informar tenantId para operar.',
+          "SUPERADMIN precisa informar tenantId para operar."
         );
       }
       return target;
     }
     if (!user.tenantId) {
-      throw new ForbiddenException('Contexto de restaurante não definido.');
+      throw new ForbiddenException("Contexto de restaurante não definido.");
     }
     return user.tenantId;
   }
 
   /** Lista usuários do restaurante (por membership) */
-  async findAll(user: AuthUser) {
-    const tenantId = this.resolveTargetTenantId(user);
+  async findAll(user: AuthUser, tenantIdOverride?: string) {
+    const tenantId = this.resolveTargetTenantId(
+      user,
+      undefined,
+      tenantIdOverride
+    );
 
-    // pega memberships do tenant com o usuário vinculado
     const memberships = await this.prisma.userTenant.findMany({
       where: { tenantId },
       include: {
@@ -58,7 +67,7 @@ export class UsersService {
           },
         },
       },
-      orderBy: { role: 'asc' },
+      orderBy: { role: "asc" },
     });
 
     return memberships.map((m) => ({
@@ -68,8 +77,12 @@ export class UsersService {
   }
 
   /** Busca usuário por id, restrito ao tenant */
-  async findById(user: AuthUser, id: string) {
-    const tenantId = this.resolveTargetTenantId(user);
+  async findById(user: AuthUser, id: string, tenantIdOverride?: string) {
+    const tenantId = this.resolveTargetTenantId(
+      user,
+      undefined,
+      tenantIdOverride
+    );
 
     const membership = await this.prisma.userTenant.findFirst({
       where: { tenantId, userId: id },
@@ -88,7 +101,7 @@ export class UsersService {
       },
     });
 
-    if (!membership) throw new NotFoundException('Usuário não encontrado.');
+    if (!membership) throw new NotFoundException("Usuário não encontrado.");
     return { ...membership.user, tenantRole: membership.role };
   }
 
@@ -105,46 +118,49 @@ export class UsersService {
    * - Se já existir usuário com o email, cria apenas o membership (se não existir)
    * - Se não existir, cria o user + membership
    */
-  async create(current: AuthUser, data: CreateUserDto) {
-    const tenantId = this.resolveTargetTenantId(current, (data as any).tenantId);
+  async create(
+    current: AuthUser,
+    data: CreateUserDto,
+    tenantIdOverride?: string
+  ) {
+    const tenantId = this.resolveTargetTenantId(
+      current,
+      (data as any).tenantId,
+      tenantIdOverride
+    );
 
-    if (!this.canManage(current.role)) {
-      throw new ForbiddenException('Sem permissão para criar usuários.');
+    if (!this.canManage(current)) {
+      throw new ForbiddenException("Sem permissão para criar usuários.");
     }
 
     if (!data.role) {
-      throw new BadRequestException('role (TenantRole) é obrigatório.');
+      throw new BadRequestException("role (TenantRole) é obrigatório.");
     }
 
-    // valida TenantRole
     if (!Object.values(TenantRole).includes(data.role as TenantRole)) {
       throw new BadRequestException(
-        `Role inválido. Permitidos: ${Object.values(TenantRole).join(', ')}`,
+        `Role inválido. Permitidos: ${Object.values(TenantRole).join(", ")}`
       );
     }
 
-    // senha (se enviado)
     let hashedPassword: string | undefined;
     if (data.password) {
       const salt = await bcrypt.genSalt();
       hashedPassword = await bcrypt.hash(data.password, salt);
     }
 
-    // verifica se já existe usuário com email
     const existing = await this.prisma.user.findUnique({
       where: { email: data.email },
       include: { memberships: { where: { tenantId } } },
     });
 
     if (existing) {
-      // se já tem membership para o tenant, erro
       if (existing.memberships.length > 0) {
         throw new BadRequestException(
-          'Usuário já está vinculado a este restaurante.',
+          "Usuário já está vinculado a este restaurante."
         );
       }
 
-      // vincula ao tenant
       const membership = await this.prisma.userTenant.create({
         data: {
           userId: existing.id,
@@ -153,7 +169,6 @@ export class UsersService {
         },
       });
 
-      // atualiza senha se enviada (opcional)
       if (hashedPassword) {
         await this.prisma.user.update({
           where: { id: existing.id },
@@ -173,14 +188,13 @@ export class UsersService {
       };
     }
 
-    // cria user + membership em transação
     try {
       const result = await this.prisma.$transaction(async (tx) => {
         const created = await tx.user.create({
           data: {
             name: data.name,
             email: data.email,
-            password: hashedPassword ?? (await bcrypt.hash('changeme', 10)), // fallback
+            password: hashedPassword ?? (await bcrypt.hash("changeme", 10)),
             active: true,
             systemRole: SystemRole.NONE,
           },
@@ -208,8 +222,8 @@ export class UsersService {
         updatedAt: result.created.updatedAt,
       };
     } catch (e: any) {
-      if (e.code === 'P2002') {
-        throw new BadRequestException('E-mail já está em uso.');
+      if (e.code === "P2002") {
+        throw new BadRequestException("E-mail já está em uso.");
       }
       throw e;
     }
@@ -219,20 +233,27 @@ export class UsersService {
    * Atualiza dados do usuário no tenant (nome/email/senha, e papel no tenant)
    * - Se `role` vier: atualiza o membership do tenant.
    */
-  async update(current: AuthUser, id: string, data: UpdateUserDto) {
-    const tenantId = this.resolveTargetTenantId(current);
+  async update(
+    current: AuthUser,
+    id: string,
+    data: UpdateUserDto,
+    tenantIdOverride?: string
+  ) {
+    const tenantId = this.resolveTargetTenantId(
+      current,
+      undefined,
+      tenantIdOverride
+    );
 
-    if (!this.canManage(current.role)) {
-      throw new ForbiddenException('Sem permissão para atualizar usuários.');
+    if (!this.canManage(current)) {
+      throw new ForbiddenException("Sem permissão para atualizar usuários.");
     }
 
-    // garante que o user pertence ao tenant
     const membership = await this.prisma.userTenant.findFirst({
       where: { tenantId, userId: id },
     });
-    if (!membership) throw new NotFoundException('Usuário não encontrado.');
+    if (!membership) throw new NotFoundException("Usuário não encontrado.");
 
-    // prepara campos de user
     const userData: Prisma.UserUpdateInput = {};
     if (data.name !== undefined) userData.name = data.name;
     if (data.email !== undefined) userData.email = data.email;
@@ -241,7 +262,6 @@ export class UsersService {
       userData.password = await bcrypt.hash(data.password, salt);
     }
 
-    // executa transação (update user + update membership role se enviado)
     const result = await this.prisma.$transaction(async (tx) => {
       const updated = Object.keys(userData).length
         ? await tx.user.update({
@@ -271,7 +291,7 @@ export class UsersService {
           });
 
       if (!updated) {
-        throw new NotFoundException('Usuário não encontrado.');
+        throw new NotFoundException("Usuário não encontrado.");
       }
 
       if (data.role !== undefined) {
@@ -280,12 +300,11 @@ export class UsersService {
           !Object.values(TenantRole).includes(data.role as TenantRole)
         ) {
           throw new BadRequestException(
-            `Role inválido. Permitidos: ${Object.values(TenantRole).join(', ')}`,
+            `Role inválido. Permitidos: ${Object.values(TenantRole).join(", ")}`
           );
         }
 
         if (data.role === null) {
-          // opcional: remover vínculo do tenant
           await tx.userTenant.delete({
             where: { userId_tenantId: { userId: id, tenantId } },
           });
@@ -297,7 +316,6 @@ export class UsersService {
         }
       }
 
-      // retorna com role atual
       const currentMembership = await tx.userTenant.findUnique({
         where: { userId_tenantId: { userId: id, tenantId } },
       });
@@ -312,21 +330,23 @@ export class UsersService {
   }
 
   /**
-   * Remove o usuário do tenant (exclui o membership). Se não restarem memberships,
-   * opcionalmente poderíamos excluir o usuário — aqui vamos **apenas** desvincular.
+   * Remove o usuário do tenant (desvincula membership).
    */
-  async delete(current: AuthUser, id: string) {
-    const tenantId = this.resolveTargetTenantId(current);
+  async delete(current: AuthUser, id: string, tenantIdOverride?: string) {
+    const tenantId = this.resolveTargetTenantId(
+      current,
+      undefined,
+      tenantIdOverride
+    );
 
-    if (!this.canManage(current.role)) {
-      throw new ForbiddenException('Sem permissão para remover usuários.');
+    if (!this.canManage(current)) {
+      throw new ForbiddenException("Sem permissão para remover usuários.");
     }
 
-    // garante que existe membership no tenant
     const membership = await this.prisma.userTenant.findFirst({
       where: { tenantId, userId: id },
     });
-    if (!membership) throw new NotFoundException('Usuário não encontrado.');
+    if (!membership) throw new NotFoundException("Usuário não encontrado.");
 
     await this.prisma.userTenant.delete({
       where: { userId_tenantId: { userId: id, tenantId } },

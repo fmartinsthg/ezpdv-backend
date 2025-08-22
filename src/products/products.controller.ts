@@ -9,107 +9,105 @@ import {
   UseGuards,
   ParseUUIDPipe,
   Query,
-  Headers,
-} from '@nestjs/common';
-import { ProductsService } from './products.service';
-import { JwtAuthGuard } from '../auth/jwt.guard';
-import { CreateProductDto } from './dto/create-product.dto';
-import { UpdateProductDto } from './dto/update-product.dto';
-import { ProductsQueryDto } from './dto/products-query.dto';
-import { CurrentUser } from '../auth/current-user.decorator';
-import { AuthUser } from '../auth/jwt.strategy';
-import { resolveEffectiveTenantId } from '../common/tenant/tenant.util';
+} from "@nestjs/common";
+import { ProductsService } from "./products.service";
+import { JwtAuthGuard } from "../auth/jwt.guard";
+import { CreateProductDto } from "./dto/create-product.dto";
+import { UpdateProductDto } from "./dto/update-product.dto";
+import { ProductsQueryDto } from "./dto/products-query.dto";
+import { CurrentUser } from "../auth/current-user.decorator";
+import { AuthUser } from "../auth/jwt.strategy";
 
-// Swagger (opcional)
 import {
   ApiBearerAuth,
+  ApiHeader,
   ApiOperation,
   ApiResponse,
   ApiTags,
-} from '@nestjs/swagger';
+} from "@nestjs/swagger";
 
-// Roles (use o caminho que você já está usando no projeto)
-import { Roles } from '../common/decorators/roles.decorator';
-import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from "../common/decorators/roles.decorator";
+import { RolesGuard } from "../auth/roles.guard";
 
-@ApiTags('products')
+import { TenantId } from "../common/tenant";
+
+@ApiTags("products")
 @ApiBearerAuth()
+@ApiHeader({
+  name: "X-Tenant-Id",
+  description:
+    "Obrigatório para SUPERADMIN operar sobre um tenant específico. Ignorado para ADMIN/MODERATOR/USER.",
+  required: false,
+})
 @UseGuards(JwtAuthGuard, RolesGuard)
-@Controller('products')
+@Controller("products")
 export class ProductsController {
   constructor(private readonly productsService: ProductsService) {}
 
-  @ApiOperation({ summary: 'Listar produtos (paginado/filtrado)' })
+  @ApiOperation({ summary: "Listar produtos (paginado/filtrado)" })
   @ApiResponse({
     status: 200,
-    description: 'Lista de produtos retornada com sucesso.',
+    description: "Lista de produtos retornada com sucesso.",
   })
   @Get()
   async findAll(
-    @CurrentUser() user: AuthUser,
-    @Headers() headers: Record<string, string>,
-    @Query() query: ProductsQueryDto,
+    @TenantId() tenantId: string,
+    @Query() query: ProductsQueryDto
   ) {
-    const tenantId = resolveEffectiveTenantId(user, headers['x-tenant-id']);
     return this.productsService.findAll(tenantId, query);
   }
 
-  @ApiOperation({ summary: 'Obter produto por ID' })
-  @ApiResponse({ status: 200, description: 'Produto encontrado.' })
-  @ApiResponse({ status: 404, description: 'Produto não encontrado.' })
-  @Get(':id')
+  @ApiOperation({ summary: "Obter produto por ID" })
+  @ApiResponse({ status: 200, description: "Produto encontrado." })
+  @ApiResponse({ status: 404, description: "Produto não encontrado." })
+  @Get(":id")
   async findOne(
-    @CurrentUser() user: AuthUser,
-    @Headers() headers: Record<string, string>,
-    @Param('id', new ParseUUIDPipe()) id: string,
+    @TenantId() tenantId: string,
+    @Param("id", new ParseUUIDPipe()) id: string
   ) {
-    const tenantId = resolveEffectiveTenantId(user, headers['x-tenant-id']);
     return this.productsService.findOne(tenantId, id);
   }
 
-  @ApiOperation({ summary: 'Criar produto' })
-  @ApiResponse({ status: 201, description: 'Produto criado.' })
-  @ApiResponse({ status: 404, description: 'Categoria informada não existe.' })
-  @Roles('ADMIN', 'MODERATOR')
+  @ApiOperation({ summary: "Criar produto" })
+  @ApiResponse({ status: 201, description: "Produto criado." })
+  @ApiResponse({ status: 404, description: "Categoria informada não existe." })
+  @Roles("ADMIN", "MODERATOR")
   @Post()
   async create(
     @CurrentUser() user: AuthUser,
-    @Headers() headers: Record<string, string>,
-    @Body() data: CreateProductDto,
+    @TenantId() tenantId: string,
+    @Body() data: CreateProductDto
   ) {
-    const tenantId = resolveEffectiveTenantId(user, headers['x-tenant-id']);
     return this.productsService.create(user, tenantId, data);
   }
 
-  @ApiOperation({ summary: 'Atualizar produto' })
-  @ApiResponse({ status: 200, description: 'Produto atualizado.' })
+  @ApiOperation({ summary: "Atualizar produto" })
+  @ApiResponse({ status: 200, description: "Produto atualizado." })
   @ApiResponse({
     status: 404,
-    description: 'Produto ou categoria não encontrados.',
+    description: "Produto ou categoria não encontrados.",
   })
-  @Roles('ADMIN', 'MODERATOR')
-  @Patch(':id')
+  @Roles("ADMIN", "MODERATOR")
+  @Patch(":id")
   async update(
     @CurrentUser() user: AuthUser,
-    @Headers() headers: Record<string, string>,
-    @Param('id', new ParseUUIDPipe()) id: string,
-    @Body() data: UpdateProductDto,
+    @TenantId() tenantId: string,
+    @Param("id", new ParseUUIDPipe()) id: string,
+    @Body() data: UpdateProductDto
   ) {
-    const tenantId = resolveEffectiveTenantId(user, headers['x-tenant-id']);
     return this.productsService.update(user, tenantId, id, data);
   }
 
-  @ApiOperation({ summary: 'Excluir produto' })
-  @ApiResponse({ status: 200, description: 'Produto excluído.' })
-  @ApiResponse({ status: 404, description: 'Produto não encontrado.' })
-  @Roles('ADMIN', 'MODERATOR')
-  @Delete(':id')
+  @ApiOperation({ summary: "Excluir produto" })
+  @ApiResponse({ status: 200, description: "Produto excluído." })
+  @ApiResponse({ status: 404, description: "Produto não encontrado." })
+  @Roles("ADMIN", "MODERATOR")
+  @Delete(":id")
   async delete(
     @CurrentUser() user: AuthUser,
-    @Headers() headers: Record<string, string>,
-    @Param('id', new ParseUUIDPipe()) id: string,
+    @TenantId() tenantId: string,
+    @Param("id", new ParseUUIDPipe()) id: string
   ) {
-    const tenantId = resolveEffectiveTenantId(user, headers['x-tenant-id']);
     return this.productsService.delete(user, tenantId, id);
   }
 }

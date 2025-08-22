@@ -16,9 +16,7 @@ let CategoryService = class CategoryService {
     constructor(prisma) {
         this.prisma = prisma;
     }
-    /**
-     * Retorna categorias ativas do tenant, com contagem de produtos ativos.
-     */
+    /** Ativas + contagem de produtos ativos por categoria (no mesmo tenant) */
     async getActiveCategoriesWithProductCount(tenantId) {
         const categories = await this.prisma.category.findMany({
             where: { tenantId, isActive: true },
@@ -132,8 +130,7 @@ let CategoryService = class CategoryService {
     /* =========================
      *        CRUD
      * ========================= */
-    async create(user, tenantId, data) {
-        // Unicidade por (tenantId, name)
+    async create(tenantId, data) {
         const exists = await this.prisma.category.findUnique({
             where: { tenantId_name: { tenantId, name: data.name } },
             select: { id: true },
@@ -235,6 +232,64 @@ let CategoryService = class CategoryService {
             throw error;
         }
     }
+    /* =========================
+     *        STATUS
+     * ========================= */
+    async deactivate(tenantId, id) {
+        // garante escopo/existência no tenant
+        await this.findOne(tenantId, id);
+        try {
+            return await this.prisma.category.update({
+                where: { id },
+                data: { isActive: false },
+                select: {
+                    id: true,
+                    name: true,
+                    description: true,
+                    isActive: true,
+                    updatedAt: true,
+                },
+            });
+        }
+        catch (error) {
+            if (error.code === 'P2025') {
+                throw new common_1.NotFoundException('Categoria não encontrada');
+            }
+            if (error.code === '22P02') {
+                throw new common_1.BadRequestException('IDs devem ser UUIDs válidos.');
+            }
+            throw error;
+        }
+    }
+    async activate(tenantId, id) {
+        // garante escopo/existência no tenant
+        await this.findOne(tenantId, id);
+        try {
+            return await this.prisma.category.update({
+                where: { id },
+                data: { isActive: true },
+                select: {
+                    id: true,
+                    name: true,
+                    description: true,
+                    isActive: true,
+                    updatedAt: true,
+                },
+            });
+        }
+        catch (error) {
+            if (error.code === 'P2025') {
+                throw new common_1.NotFoundException('Categoria não encontrada');
+            }
+            if (error.code === '22P02') {
+                throw new common_1.BadRequestException('IDs devem ser UUIDs válidos.');
+            }
+            throw error;
+        }
+    }
+    /* =========================
+     *        EXCLUSÃO
+     * ========================= */
     async delete(tenantId, id) {
         // valida escopo
         await this.findOne(tenantId, id);
@@ -302,53 +357,6 @@ let CategoryService = class CategoryService {
                 updatedAt: true,
             },
         });
-    }
-    /* =========================
-     *        STATUS
-     * ========================= */
-    async deactivate(tenantId, id) {
-        await this.findOne(tenantId, id);
-        try {
-            return await this.prisma.category.update({
-                where: { id },
-                data: { isActive: false },
-                select: {
-                    id: true,
-                    name: true,
-                    description: true,
-                    isActive: true,
-                    updatedAt: true,
-                },
-            });
-        }
-        catch (error) {
-            if (error.code === 'P2025') {
-                throw new common_1.NotFoundException('Categoria não encontrada');
-            }
-            throw error;
-        }
-    }
-    async activate(tenantId, id) {
-        await this.findOne(tenantId, id);
-        try {
-            return await this.prisma.category.update({
-                where: { id },
-                data: { isActive: true },
-                select: {
-                    id: true,
-                    name: true,
-                    description: true,
-                    isActive: true,
-                    updatedAt: true,
-                },
-            });
-        }
-        catch (error) {
-            if (error.code === 'P2025') {
-                throw new common_1.NotFoundException('Categoria não encontrada');
-            }
-            throw error;
-        }
     }
     /* =========================
      *       HIERARQUIA

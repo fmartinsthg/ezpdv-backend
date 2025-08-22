@@ -18,9 +18,15 @@ let ProductsService = class ProductsService {
     constructor(prisma) {
         this.prisma = prisma;
     }
-    /** Evita erro TS em comparação de enum/literal — compara por string */
-    canManage(role) {
-        const r = role ? String(role) : '';
+    /**
+     * SUPERADMIN é superuser (pode gerenciar tudo)
+     * ADMIN / MODERATOR também podem gerenciar.
+     */
+    canManage(user) {
+        const sys = user?.systemRole ? String(user.systemRole).toUpperCase() : '';
+        if (sys === 'SUPERADMIN')
+            return true;
+        const r = user?.role ? String(user.role).toUpperCase() : '';
         return r === 'ADMIN' || r === 'MODERATOR';
     }
     async findAll(tenantId, query) {
@@ -83,7 +89,7 @@ let ProductsService = class ProductsService {
         return product;
     }
     async create(user, tenantId, data) {
-        if (!this.canManage(user.role)) {
+        if (!this.canManage(user)) {
             throw new common_1.ForbiddenException('Sem permissão para criar produtos.');
         }
         // valida categoria dentro do tenant (se enviada)
@@ -103,7 +109,10 @@ let ProductsService = class ProductsService {
                     name: data.name,
                     description: data.description,
                     price: new client_1.Prisma.Decimal(typeof data.price === 'string' ? data.price : String(data.price)),
-                    cost: new client_1.Prisma.Decimal(typeof data.cost === 'string' ? data.cost : String(data.cost)),
+                    // `cost` é opcional em alguns contextos — ajuste conforme seu DTO
+                    cost: data.cost !== undefined
+                        ? new client_1.Prisma.Decimal(typeof data.cost === 'string' ? data.cost : String(data.cost))
+                        : new client_1.Prisma.Decimal('0'),
                     stock: data.stock,
                     categoryId: data.categoryId,
                     isActive: true,
@@ -126,7 +135,7 @@ let ProductsService = class ProductsService {
         }
     }
     async update(user, tenantId, id, data) {
-        if (!this.canManage(user.role)) {
+        if (!this.canManage(user)) {
             throw new common_1.ForbiddenException('Sem permissão para atualizar produtos.');
         }
         // garante escopo (existe no tenant)
@@ -146,7 +155,6 @@ let ProductsService = class ProductsService {
                 name: data.name,
                 description: data.description,
                 stock: data.stock,
-                // `isActive` é opcional no DTO; só aplica se veio definido
                 ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
             };
             if (data.categoryId !== undefined) {
@@ -183,7 +191,7 @@ let ProductsService = class ProductsService {
         }
     }
     async delete(user, tenantId, id) {
-        if (!this.canManage(user.role)) {
+        if (!this.canManage(user)) {
             throw new common_1.ForbiddenException('Sem permissão para remover produtos.');
         }
         // garante escopo (existe no tenant)

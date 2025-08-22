@@ -16,9 +16,14 @@ import { AuthUser } from '../auth/jwt.strategy';
 export class ProductsService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Evita erro TS em comparação de enum/literal — compara por string */
-  private canManage(role?: AuthUser['role'] | null): boolean {
-    const r = role ? String(role) : '';
+  /**
+   * SUPERADMIN é superuser (pode gerenciar tudo)
+   * ADMIN / MODERATOR também podem gerenciar.
+   */
+  private canManage(user: AuthUser): boolean {
+    const sys = user?.systemRole ? String(user.systemRole).toUpperCase() : '';
+    if (sys === 'SUPERADMIN') return true;
+    const r = user?.role ? String(user.role).toUpperCase() : '';
     return r === 'ADMIN' || r === 'MODERATOR';
   }
 
@@ -98,7 +103,7 @@ export class ProductsService {
   }
 
   async create(user: AuthUser, tenantId: string, data: CreateProductDto) {
-    if (!this.canManage(user.role)) {
+    if (!this.canManage(user)) {
       throw new ForbiddenException('Sem permissão para criar produtos.');
     }
 
@@ -124,9 +129,13 @@ export class ProductsService {
           price: new Prisma.Decimal(
             typeof data.price === 'string' ? data.price : String(data.price),
           ),
-          cost: new Prisma.Decimal(
-            typeof data.cost === 'string' ? data.cost : String(data.cost),
-          ),
+        // `cost` é opcional em alguns contextos — ajuste conforme seu DTO
+          cost:
+            data.cost !== undefined
+              ? new Prisma.Decimal(
+                  typeof data.cost === 'string' ? data.cost : String(data.cost),
+                )
+              : new Prisma.Decimal('0'),
           stock: data.stock,
           categoryId: data.categoryId,
           isActive: true,
@@ -154,7 +163,7 @@ export class ProductsService {
     id: string,
     data: UpdateProductDto,
   ) {
-    if (!this.canManage(user.role)) {
+    if (!this.canManage(user)) {
       throw new ForbiddenException('Sem permissão para atualizar produtos.');
     }
 
@@ -179,7 +188,6 @@ export class ProductsService {
         name: data.name,
         description: data.description,
         stock: data.stock,
-        // `isActive` é opcional no DTO; só aplica se veio definido
         ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
       };
 
@@ -223,7 +231,7 @@ export class ProductsService {
   }
 
   async delete(user: AuthUser, tenantId: string, id: string) {
-    if (!this.canManage(user.role)) {
+    if (!this.canManage(user)) {
       throw new ForbiddenException('Sem permissão para remover produtos.');
     }
 

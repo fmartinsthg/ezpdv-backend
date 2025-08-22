@@ -13,33 +13,40 @@ exports.RolesGuard = void 0;
 const common_1 = require("@nestjs/common");
 const core_1 = require("@nestjs/core");
 const roles_decorator_1 = require("../decorators/roles.decorator");
+const public_decorator_1 = require("../decorators/public.decorator");
 let RolesGuard = class RolesGuard {
     constructor(reflector) {
         this.reflector = reflector;
     }
-    canActivate(ctx) {
-        // Ex.: @Roles('ADMIN','MODERATOR')
-        const required = this.reflector.getAllAndOverride(roles_decorator_1.ROLES_KEY, [
-            ctx.getHandler(),
-            ctx.getClass(),
+    canActivate(context) {
+        const isPublic = this.reflector.getAllAndOverride(public_decorator_1.IS_PUBLIC_KEY, [
+            context.getHandler(),
+            context.getClass(),
         ]);
-        // Se a rota não exigiu roles, permite
-        if (!required || required.length === 0)
+        if (isPublic)
             return true;
-        const req = ctx.switchToHttp().getRequest();
-        const user = req.user;
-        if (!user)
-            return false;
-        // SUPERADMIN tem passe livre (desde que o tenant middleware
-        // já tenha resolvido X-Tenant-Id quando necessário)
-        if (user.systemRole === 'SUPERADMIN')
+        const requiredRoles = this.reflector.getAllAndOverride(roles_decorator_1.ROLES_KEY, [
+            context.getHandler(),
+            context.getClass(),
+        ]) || [];
+        if (requiredRoles.length === 0)
             return true;
-        // Se não tem role de tenant, nega
-        if (!user.role)
-            return false;
-        // Normaliza os roles exigidos (strings) para o enum do Prisma
-        const requiredEnumRoles = required.map(r => r.toUpperCase());
-        return requiredEnumRoles.includes(user.role);
+        const req = context.switchToHttp().getRequest();
+        const user = (req?.user || {});
+        const tokenRoles = new Set();
+        if (user.role)
+            tokenRoles.add(String(user.role).toUpperCase());
+        if (user.systemRole)
+            tokenRoles.add(String(user.systemRole).toUpperCase());
+        if (Array.isArray(user.roles)) {
+            for (const r of user.roles)
+                if (r)
+                    tokenRoles.add(String(r).toUpperCase());
+        }
+        // SUPERADMIN passa em qualquer rota protegida
+        if (tokenRoles.has("SUPERADMIN"))
+            return true;
+        return requiredRoles.some((r) => tokenRoles.has(String(r).toUpperCase()));
     }
 };
 exports.RolesGuard = RolesGuard;

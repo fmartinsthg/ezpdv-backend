@@ -7,15 +7,12 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { UpdateCategoryDto } from './dto/update-category.dto';
-import { AuthUser } from '../auth/jwt.strategy';
 
 @Injectable()
 export class CategoryService {
   constructor(private readonly prisma: PrismaService) {}
 
-  /**
-   * Retorna categorias ativas do tenant, com contagem de produtos ativos.
-   */
+  /** Ativas + contagem de produtos ativos por categoria (no mesmo tenant) */
   async getActiveCategoriesWithProductCount(tenantId: string) {
     const categories = await this.prisma.category.findMany({
       where: { tenantId, isActive: true },
@@ -148,8 +145,7 @@ export class CategoryService {
    *        CRUD
    * ========================= */
 
-  async create(user: AuthUser, tenantId: string, data: CreateCategoryDto) {
-    // Unicidade por (tenantId, name)
+  async create(tenantId: string, data: CreateCategoryDto) {
     const exists = await this.prisma.category.findUnique({
       where: { tenantId_name: { tenantId, name: data.name } },
       select: { id: true },
@@ -267,6 +263,66 @@ export class CategoryService {
     }
   }
 
+  /* =========================
+   *        STATUS
+   * ========================= */
+
+  async deactivate(tenantId: string, id: string) {
+    // garante escopo/existência no tenant
+    await this.findOne(tenantId, id);
+    try {
+      return await this.prisma.category.update({
+        where: { id },
+        data: { isActive: false },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          isActive: true,
+          updatedAt: true,
+        },
+      });
+    } catch (error: any) {
+      if (error.code === 'P2025') {
+        throw new NotFoundException('Categoria não encontrada');
+      }
+      if (error.code === '22P02') {
+        throw new BadRequestException('IDs devem ser UUIDs válidos.');
+      }
+      throw error;
+    }
+  }
+
+  async activate(tenantId: string, id: string) {
+    // garante escopo/existência no tenant
+    await this.findOne(tenantId, id);
+    try {
+      return await this.prisma.category.update({
+        where: { id },
+        data: { isActive: true },
+        select: {
+          id: true,
+          name: true,
+          description: true,
+          isActive: true,
+          updatedAt: true,
+        },
+      });
+    } catch (error: any) {
+      if (error.code === 'P2025') {
+        throw new NotFoundException('Categoria não encontrada');
+      }
+      if (error.code === '22P02') {
+        throw new BadRequestException('IDs devem ser UUIDs válidos.');
+      }
+      throw error;
+    }
+  }
+
+  /* =========================
+   *        EXCLUSÃO
+   * ========================= */
+
   async delete(tenantId: string, id: string) {
     // valida escopo
     await this.findOne(tenantId, id);
@@ -355,54 +411,6 @@ export class CategoryService {
         updatedAt: true,
       },
     });
-  }
-
-  /* =========================
-   *        STATUS
-   * ========================= */
-
-  async deactivate(tenantId: string, id: string) {
-    await this.findOne(tenantId, id);
-    try {
-      return await this.prisma.category.update({
-        where: { id },
-        data: { isActive: false },
-        select: {
-          id: true,
-          name: true,
-          description: true,
-          isActive: true,
-          updatedAt: true,
-        },
-      });
-    } catch (error: any) {
-      if (error.code === 'P2025') {
-        throw new NotFoundException('Categoria não encontrada');
-      }
-      throw error;
-    }
-  }
-
-  async activate(tenantId: string, id: string) {
-    await this.findOne(tenantId, id);
-    try {
-      return await this.prisma.category.update({
-        where: { id },
-        data: { isActive: true },
-        select: {
-          id: true,
-          name: true,
-          description: true,
-          isActive: true,
-          updatedAt: true,
-        },
-      });
-    } catch (error: any) {
-      if (error.code === 'P2025') {
-        throw new NotFoundException('Categoria não encontrada');
-      }
-      throw error;
-    }
   }
 
   /* =========================

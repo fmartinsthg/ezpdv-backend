@@ -1,49 +1,57 @@
-// src/platform/tenants/tenants.controller.ts
 import {
-  Controller, Post, Get, Patch,
-  Body, Query, Param, UseGuards, ForbiddenException, ParseUUIDPipe
+  Controller,
+  Post,
+  Get,
+  Patch,
+  Body,
+  Query,
+  Param,
+  UseGuards,
+  ParseUUIDPipe,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../../auth/jwt.guard';
-import { CurrentUser } from '../../auth/current-user.decorator';
-import { AuthUser } from '../../auth/jwt.strategy';
+import { RolesGuard } from '../../auth/roles.guard';
+import { Roles } from '../../auth/roles.decorator';
+import { SkipTenant } from '../../common/tenant'; // exportado pelo barrel index.ts do tenant
 import { TenantsService } from './tenants.service';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { UpdateTenantDto } from './dto/update-tenant.dto';
+import {
+  ApiBearerAuth,
+  ApiOperation,
+  ApiQuery,
+  ApiTags,
+} from '@nestjs/swagger';
 
-@UseGuards(JwtAuthGuard)
+@ApiTags('tenants')
+@ApiBearerAuth()
+@UseGuards(JwtAuthGuard, RolesGuard)
+@Roles('SUPERADMIN') // somente SUPERADMIN opera nivel plataforma
+@SkipTenant()        // <<<<<<<<<<<<<< NÃO exigir contexto de tenant nestas rotas
 @Controller('tenants')
 export class TenantsController {
   constructor(private readonly tenantsService: TenantsService) {}
 
-  private ensureSuperAdmin(user: AuthUser) {
-    if (user.systemRole !== 'SUPERADMIN') {
-      throw new ForbiddenException('Acesso restrito ao SUPERADMIN.');
-    }
-  }
-
   @Post()
-  create(@CurrentUser() user: AuthUser, @Body() dto: CreateTenantDto) {
-    this.ensureSuperAdmin(user);
+  @ApiOperation({ summary: 'Criar tenant (plataforma)' })
+  create(@Body() dto: CreateTenantDto) {
     return this.tenantsService.create(dto);
   }
 
   @Get()
-  findAll(
-    @CurrentUser() user: AuthUser,
-    @Query('page') page?: string,
-    @Query('limit') limit?: string,
-  ) {
-    this.ensureSuperAdmin(user);
+  @ApiOperation({ summary: 'Listar tenants (plataforma)' })
+  @ApiQuery({ name: 'page', required: false, type: Number })
+  @ApiQuery({ name: 'limit', required: false, type: Number })
+  findAll(@Query('page') page?: string, @Query('limit') limit?: string) {
     return this.tenantsService.findAll(Number(page) || 1, Number(limit) || 10);
   }
 
   @Patch(':id')
+  @ApiOperation({ summary: 'Atualizar tenant (plataforma)' })
   update(
-    @CurrentUser() user: AuthUser,
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: UpdateTenantDto,
   ) {
-    this.ensureSuperAdmin(user);
     return this.tenantsService.update(id, dto);
   }
 }
