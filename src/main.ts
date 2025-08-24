@@ -1,8 +1,9 @@
 import { NestFactory } from "@nestjs/core";
 import { AppModule } from "./app.module";
-import { ValidationPipe, BadRequestException } from '@nestjs/common';
+import { ValidationPipe, BadRequestException } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
 import { SwaggerModule, DocumentBuilder } from "@nestjs/swagger";
+import { DecimalSerializationInterceptor } from "./common/interceptors/decimal-serialization.interceptor";
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -10,23 +11,24 @@ async function bootstrap() {
   // Habilita validações automáticas com class-validator + class-transformer
   app.useGlobalPipes(
     new ValidationPipe({
-      transform: true, 
-      whitelist: true, 
-      forbidNonWhitelisted: true, 
-      stopAtFirstError: false, 
+      transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
+      stopAtFirstError: false,
       exceptionFactory: (errors) => {
-        const formattedErrors = errors.map(err => {
+        const formattedErrors = errors.map((err) => {
           return {
             field: err.property,
-            messages: err.constraints
-              ? Object.values(err.constraints)
-              : [],
+            messages: err.constraints ? Object.values(err.constraints) : [],
           };
         });
         return new BadRequestException(formattedErrors);
       },
-    }),
+    })
   );
+
+  // Registro global do interceptor de serialização de Decimal
+  app.useGlobalInterceptors(new DecimalSerializationInterceptor());
 
   const configService = app.get(ConfigService);
   const port = configService.get("PORT") || 3333;

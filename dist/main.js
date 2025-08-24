@@ -5,6 +5,7 @@ const app_module_1 = require("./app.module");
 const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
 const swagger_1 = require("@nestjs/swagger");
+const decimal_serialization_interceptor_1 = require("./common/interceptors/decimal-serialization.interceptor");
 async function bootstrap() {
     const app = await core_1.NestFactory.create(app_module_1.AppModule);
     // Habilita validações automáticas com class-validator + class-transformer
@@ -14,17 +15,17 @@ async function bootstrap() {
         forbidNonWhitelisted: true,
         stopAtFirstError: false,
         exceptionFactory: (errors) => {
-            const formattedErrors = errors.map(err => {
+            const formattedErrors = errors.map((err) => {
                 return {
                     field: err.property,
-                    messages: err.constraints
-                        ? Object.values(err.constraints)
-                        : [],
+                    messages: err.constraints ? Object.values(err.constraints) : [],
                 };
             });
             return new common_1.BadRequestException(formattedErrors);
         },
     }));
+    // Registro global do interceptor de serialização de Decimal
+    app.useGlobalInterceptors(new decimal_serialization_interceptor_1.DecimalSerializationInterceptor());
     const configService = app.get(config_1.ConfigService);
     const port = configService.get("PORT") || 3333;
     const config = new swagger_1.DocumentBuilder()

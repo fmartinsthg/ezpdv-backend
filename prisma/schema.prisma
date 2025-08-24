@@ -22,11 +22,28 @@ enum TenantRole {
   USER         // atendente/garçom
 }
 
+enum OrderStatus {
+  OPEN
+  PAID
+  CANCELED
+}
+
 enum PaymentMethod {
   CASH
   CARD
   PIX
   OTHER
+}
+
+enum InventoryUnit {
+  ML
+  L
+  UNIT
+}
+enum StockMovementType {
+  SALE
+  PURCHASE
+  ADJUSTMENT
 }
 
 enum TransactionType {
@@ -50,6 +67,13 @@ model Tenant {
   products    Product[]
   sales       Sale[]
   financials  FinancialTransaction[]
+
+  orders         Order[]
+  orderItems     OrderItem[]
+  payments       Payment[]
+  inventoryItems InventoryItem[]
+  recipes        Recipe[]
+  stockMovements StockMovement[]
 }
 
 model User {
@@ -65,6 +89,7 @@ model User {
   memberships            UserTenant[]
   financialTransactions  FinancialTransaction[] @relation("UserFinancialTransactions")
   sales                  Sale[]
+  cashierOrders          Order[]   @relation("OrderCashierUser")
 }
 
 model UserTenant {
@@ -125,6 +150,8 @@ model Product {
 
   tenant      Tenant     @relation(fields: [tenantId], references: [id])
   saleItems   SaleItem[]
+  orderItems     OrderItem[]
+  recipe         Recipe?
 
   @@unique([tenantId, name])
 
@@ -149,8 +176,6 @@ model Sale {
   tenant     Tenant     @relation(fields: [tenantId], references: [id])
 
   items      SaleItem[]
-
-  @@index([tenantId, createdAt])
 }
 
 model SaleItem {
@@ -178,4 +203,105 @@ model FinancialTransaction {
   tenant      Tenant          @relation(fields: [tenantId], references: [id])
 
   @@index([tenantId, type, createdAt])
+}
+
+// --- Orders e Pagamentos ---
+
+model Order {
+  id              String        @id @default(uuid())
+  tenantId        String
+  status          OrderStatus   @default(OPEN)
+  subtotal        Decimal       @db.Decimal(10, 2)
+  discount        Decimal?      @db.Decimal(10, 2)
+  total           Decimal       @db.Decimal(10, 2)
+  cashierUserId   String
+  idempotencyKey  String?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  tenant          Tenant        @relation(fields: [tenantId], references: [id])
+  cashierUser     User          @relation("OrderCashierUser", fields: [cashierUserId], references: [id])
+  items           OrderItem[]
+  payments        Payment[]
+  stockMovements  StockMovement[]
+
+  @@index([tenantId, status, createdAt])
+  @@unique([tenantId, idempotencyKey])
+}
+
+model OrderItem {
+  id         String   @id @default(uuid())
+  orderId    String
+  tenantId   String
+  productId  String
+  quantity   Decimal  @db.Decimal(10, 3)
+  unitPrice  Decimal  @db.Decimal(10, 2)
+  total      Decimal  @db.Decimal(10, 2)
+
+  order      Order    @relation(fields: [orderId], references: [id])
+  product    Product  @relation(fields: [productId], references: [id])
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+}
+
+model Payment {
+  id         String        @id @default(uuid())
+  orderId    String
+  tenantId   String
+  method     PaymentMethod
+  amount     Decimal       @db.Decimal(10, 2)
+
+  order      Order         @relation(fields: [orderId], references: [id])
+  tenant     Tenant        @relation(fields: [tenantId], references: [id])
+}
+
+// --- Estoque, Receita e Movimentação ---
+
+model InventoryItem {
+  id         String         @id @default(uuid())
+  tenantId   String
+  name       String
+  unit       InventoryUnit
+  factorToBase Decimal      @db.Decimal(10, 3)
+  onHand     Decimal        @db.Decimal(10, 3)
+  isIngredient Boolean      @default(false)
+
+  tenant     Tenant         @relation(fields: [tenantId], references: [id])
+  recipeLines    RecipeLine[]
+  stockMovements StockMovement[]
+
+  @@unique([tenantId, name])
+}
+
+model Recipe {
+  id         String         @id @default(uuid())
+  productId  String         @unique
+  tenantId   String
+
+  product    Product        @relation(fields: [productId], references: [id])
+  tenant     Tenant         @relation(fields: [tenantId], references: [id])
+  lines          RecipeLine[]
+}
+
+model RecipeLine {
+  id             String         @id @default(uuid())
+  recipeId       String
+  inventoryItemId String
+  qtyBase        Decimal        @db.Decimal(10, 3)
+
+  recipe         Recipe         @relation(fields: [recipeId], references: [id])
+  inventoryItem  InventoryItem  @relation(fields: [inventoryItemId], references: [id])
+}
+
+model StockMovement {
+  id              String            @id @default(uuid())
+  tenantId        String
+  inventoryItemId String
+  type            StockMovementType
+  qtyDelta        Decimal           @db.Decimal(10, 3)
+  relatedOrderId  String?
+  createdAt       DateTime          @default(now())
+
+  tenant          Tenant            @relation(fields: [tenantId], references: [id])
+  inventoryItem   InventoryItem     @relation(fields: [inventoryItemId], references: [id])
+  order           Order?            @relation(fields: [relatedOrderId], references: [id])
 }
