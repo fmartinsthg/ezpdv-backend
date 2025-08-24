@@ -25,11 +25,15 @@ let JwtStrategy = class JwtStrategy extends (0, passport_1.PassportStrategy)(pas
         this.config = config;
     }
     async validate(payload) {
+        // Garante string e preenche ambos os campos (sub e userId)
+        const id = String(payload.sub);
         return {
-            userId: payload.sub,
+            sub: id,
+            userId: id,
             systemRole: payload.systemRole ?? 'NONE',
             tenantId: payload.tenantId ?? null,
             role: payload.role ?? null,
+            email: payload.email ?? null,
         };
     }
 };

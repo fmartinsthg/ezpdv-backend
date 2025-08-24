@@ -1,46 +1,91 @@
-import { ApiProperty } from '@nestjs/swagger';
-import { IsArray, ValidateNested, IsUUID, IsNotEmpty, IsOptional, IsNumberString } from 'class-validator';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  IsArray,
+  ArrayMinSize,
+  ValidateNested,
+  IsUUID,
+  IsInt,
+  Min,
+  IsOptional,
+  IsString,
+  IsNumber,
+  MinLength,
+  IsPositive,
+  IsEnum,
+} from 'class-validator';
 import { Type } from 'class-transformer';
+import { PaymentMethod } from '@prisma/client';
 
-export class OrderItemDto {
-  @ApiProperty({ example: 'uuid-v4' })
+export class CreateOrderItemDto {
+  @ApiProperty({ format: 'uuid' })
   @IsUUID()
-  productId: string;
+  productId!: string;
 
-  @ApiProperty({ example: '2.000', description: 'Quantidade (string, até 3 casas decimais)' })
-  @IsNumberString()
-  quantity: string;
+  @ApiProperty({ example: 2 })
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  quantity!: number;
 
-  @ApiProperty({ example: '15.00', description: 'Preço unitário (string, 2 casas decimais)' })
-  @IsNumberString()
-  unitPrice: string;
+  @ApiPropertyOptional({ example: 12.9, description: 'Se omitido, usa product.price' })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  unitPrice?: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  notes?: string;
 }
 
-export class PaymentDto {
-  @ApiProperty({ example: 'CASH', enum: ['CASH', 'CARD', 'PIX', 'OTHER'] })
-  @IsNotEmpty()
-  method: string;
+export class CreatePaymentDto {
+  @ApiProperty({ enum: PaymentMethod, example: PaymentMethod.CASH })
+  @IsEnum(PaymentMethod)
+  method!: PaymentMethod;
 
-  @ApiProperty({ example: '30.00', description: 'Valor do pagamento (string, 2 casas decimais)' })
-  @IsNumberString()
-  amount: string;
+  @ApiProperty({ example: 25.8 })
+  @Type(() => Number)
+  @IsNumber()
+  @IsPositive()
+  amount!: number;
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  reference?: string;
 }
 
 export class CreateOrderDto {
-  @ApiProperty({ type: [OrderItemDto] })
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => OrderItemDto)
-  items: OrderItemDto[];
-
-  @ApiProperty({ type: [PaymentDto] })
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => PaymentDto)
-  payments: PaymentDto[];
-
-  @ApiProperty({ example: '5.00', required: false })
+  @ApiPropertyOptional({ example: '12', description: 'Número da comanda/mesa' })
   @IsOptional()
-  @IsNumberString()
-  discount?: string;
+  @IsString()
+  tabNumber?: string;
+
+  @ApiProperty({ type: [CreateOrderItemDto] })
+  @IsArray()
+  @ArrayMinSize(1)
+  @ValidateNested({ each: true })
+  @Type(() => CreateOrderItemDto)
+  items!: CreateOrderItemDto[];
+
+  @ApiPropertyOptional({ example: 0 })
+  @IsOptional()
+  @Type(() => Number)
+  @IsNumber()
+  @Min(0)
+  discount?: number;
+
+  @ApiPropertyOptional({ type: [CreatePaymentDto] })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => CreatePaymentDto)
+  payments?: CreatePaymentDto[];
+
+  @ApiPropertyOptional()
+  @IsOptional()
+  @IsString()
+  notes?: string;
 }

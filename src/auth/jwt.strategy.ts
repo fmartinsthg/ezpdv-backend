@@ -4,12 +4,22 @@ import { ConfigService } from '@nestjs/config';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 
-/** Tipo que seu app vai receber em req.user */
+/** Tipo que seu app vai receber em req.user (unificado) */
 export interface AuthUser {
+  /** ID canônico do usuário (como no JWT: `sub`) */
+  sub: string;
+  /** Alias legado para compatibilidade com código existente */
   userId: string;
-  systemRole: 'SUPERADMIN' | 'SUPPORT' | 'NONE';
+
+  /** Papel global na plataforma */
+  systemRole: 'SUPERADMIN' | 'SUPPORT' | 'NONE' | null;
+  /** Tenant do contexto (pode ser null para SUPERADMIN fora de contexto) */
   tenantId: string | null;
-  role: 'ADMIN' | 'MODERATOR' | 'USER' | null; // papel dentro do tenant
+  /** Papel dentro do tenant atual */
+  role: 'ADMIN' | 'MODERATOR' | 'USER' | null;
+
+  /** Opcional: e-mail (se incluído no payload) */
+  email?: string | null;
 }
 
 @Injectable()
@@ -23,11 +33,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: any): Promise<AuthUser> {
+    // Garante string e preenche ambos os campos (sub e userId)
+    const id = String(payload.sub);
+
     return {
-      userId: payload.sub,
-      systemRole: payload.systemRole ?? 'NONE',
-      tenantId: payload.tenantId ?? null,
-      role: payload.role ?? null,
-    };
-  }
+      sub: id,
+      userId: id,
+      systemRole: (payload.systemRole as AuthUser['systemRole']) ?? 'NONE',
+      tenantId: (payload.tenantId as string | null) ?? null,
+      role: (payload.role as AuthUser['role']) ?? null,
+      email: (payload.email as string | null) ?? null,
+    };
+  }
 }

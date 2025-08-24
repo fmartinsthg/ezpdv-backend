@@ -11,6 +11,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CreateProductDto = void 0;
 const class_validator_1 = require("class-validator");
+const swagger_1 = require("@nestjs/swagger");
 const DECIMAL_REGEX = /^-?\d+(\.\d+)?$/; // aceita "55", "55.0", "55.00"
 class CreateProductDto {
 }
@@ -18,34 +19,54 @@ exports.CreateProductDto = CreateProductDto;
 __decorate([
     (0, class_validator_1.IsNotEmpty)(),
     (0, class_validator_1.IsString)(),
+    (0, swagger_1.ApiProperty)({ example: "Produto Exemplo" }),
     __metadata("design:type", String)
 ], CreateProductDto.prototype, "name", void 0);
 __decorate([
     (0, class_validator_1.IsOptional)(),
     (0, class_validator_1.IsString)(),
+    (0, swagger_1.ApiProperty)({ example: "Descrição do produto", required: false }),
     __metadata("design:type", String)
 ], CreateProductDto.prototype, "description", void 0);
 __decorate([
-    (0, class_validator_1.IsNotEmpty)({ message: 'O preço é obrigatório.' }),
+    (0, class_validator_1.IsNotEmpty)({ message: "O preço é obrigatório." }),
     (0, class_validator_1.Matches)(DECIMAL_REGEX, {
         message: 'price deve ser decimal em string, ex: "55.00"',
+    }),
+    (0, swagger_1.ApiProperty)({
+        type: String,
+        example: "15.00",
+        description: "Preço em string com 2 casas decimais",
     }),
     __metadata("design:type", String)
 ], CreateProductDto.prototype, "price", void 0);
 __decorate([
-    (0, class_validator_1.IsNotEmpty)({ message: 'O custo é obrigatório.' }),
+    (0, class_validator_1.IsNotEmpty)({ message: "O custo é obrigatório." }),
     (0, class_validator_1.Matches)(DECIMAL_REGEX, {
         message: 'cost deve ser decimal em string, ex: "30.00"',
+    }),
+    (0, swagger_1.ApiProperty)({
+        type: String,
+        example: "10.00",
+        description: "Custo em string com 2 casas decimais",
     }),
     __metadata("design:type", String)
 ], CreateProductDto.prototype, "cost", void 0);
 __decorate([
-    (0, class_validator_1.IsInt)({ message: 'O estoque deve ser um número inteiro.' }),
-    (0, class_validator_1.Min)(0, { message: 'O estoque não pode ser negativo.' }),
-    __metadata("design:type", Number)
+    (0, class_validator_1.IsNotEmpty)({ message: "O estoque é obrigatório." }),
+    (0, class_validator_1.Matches)(/^\d+(\.\d{1,3})?$/, {
+        message: 'stock deve ser decimal em string, ex: "50.000"',
+    }),
+    (0, swagger_1.ApiProperty)({
+        type: String,
+        example: "50.000",
+        description: "Estoque em string com 3 casas decimais",
+    }),
+    __metadata("design:type", String)
 ], CreateProductDto.prototype, "stock", void 0);
 __decorate([
-    (0, class_validator_1.IsNotEmpty)({ message: 'O ID da categoria é obrigatório.' }),
-    (0, class_validator_1.IsUUID)('4', { message: 'categoryId deve ser um UUID v4 válido.' }),
+    (0, class_validator_1.IsNotEmpty)({ message: "O ID da categoria é obrigatório." }),
+    (0, class_validator_1.IsUUID)("4", { message: "categoryId deve ser um UUID v4 válido." }),
+    (0, swagger_1.ApiProperty)({ example: "uuid-v4", description: "ID da categoria" }),
     __metadata("design:type", String)
 ], CreateProductDto.prototype, "categoryId", void 0);

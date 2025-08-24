@@ -9,17 +9,19 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.UpdateProductDto = void 0;
+exports.AppendItemsDto = void 0;
 const swagger_1 = require("@nestjs/swagger");
-const create_product_dto_1 = require("./create-product.dto");
 const class_validator_1 = require("class-validator");
-class UpdateProductDto extends (0, swagger_1.PartialType)(create_product_dto_1.CreateProductDto) {
+const class_transformer_1 = require("class-transformer");
+const create_order_dto_1 = require("./create-order.dto");
+class AppendItemsDto {
 }
-exports.UpdateProductDto = UpdateProductDto;
+exports.AppendItemsDto = AppendItemsDto;
 __decorate([
-    (0, class_validator_1.IsOptional)(),
-    (0, class_validator_1.IsBoolean)()
-    // Ativo/inativo
-    ,
-    __metadata("design:type", Boolean)
-], UpdateProductDto.prototype, "isActive", void 0);
+    (0, swagger_1.ApiProperty)({ type: [create_order_dto_1.CreateOrderItemDto] }),
+    (0, class_validator_1.IsArray)(),
+    (0, class_validator_1.ArrayMinSize)(1),
+    (0, class_validator_1.ValidateNested)({ each: true }),
+    (0, class_transformer_1.Type)(() => create_order_dto_1.CreateOrderItemDto),
+    __metadata("design:type", Array)
+], AppendItemsDto.prototype, "items", void 0);

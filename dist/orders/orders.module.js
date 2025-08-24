@@ -7,20 +7,19 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.OrdersModule = void 0;
-// src/orders/orders.module.ts
 const common_1 = require("@nestjs/common");
 const orders_controller_1 = require("./orders.controller");
 const orders_service_1 = require("./orders.service");
-const prisma_module_1 = require("../prisma/prisma.module"); // Para injetar PrismaService
-const products_module_1 = require("../products/products.module"); // Se for necessário buscar info de produtos
+const prisma_module_1 = require("../prisma/prisma.module");
+const auth_module_1 = require("../auth/auth.module");
 let OrdersModule = class OrdersModule {
 };
 exports.OrdersModule = OrdersModule;
 exports.OrdersModule = OrdersModule = __decorate([
     (0, common_1.Module)({
+        imports: [prisma_module_1.PrismaModule, auth_module_1.AuthModule],
         controllers: [orders_controller_1.OrdersController],
         providers: [orders_service_1.OrdersService],
-        imports: [prisma_module_1.PrismaModule, products_module_1.ProductsModule],
         exports: [orders_service_1.OrdersService],
     })
 ], OrdersModule);

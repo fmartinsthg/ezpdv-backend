@@ -9,17 +9,15 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.UpdateProductDto = void 0;
+exports.VoidItemDto = void 0;
 const swagger_1 = require("@nestjs/swagger");
-const create_product_dto_1 = require("./create-product.dto");
 const class_validator_1 = require("class-validator");
-class UpdateProductDto extends (0, swagger_1.PartialType)(create_product_dto_1.CreateProductDto) {
+class VoidItemDto {
 }
-exports.UpdateProductDto = UpdateProductDto;
+exports.VoidItemDto = VoidItemDto;
 __decorate([
-    (0, class_validator_1.IsOptional)(),
-    (0, class_validator_1.IsBoolean)()
-    // Ativo/inativo
-    ,
-    __metadata("design:type", Boolean)
-], UpdateProductDto.prototype, "isActive", void 0);
+    (0, swagger_1.ApiProperty)({ example: 'Erro de lançamento / cliente desistiu' }),
+    (0, class_validator_1.IsString)(),
+    (0, class_validator_1.MinLength)(3),
+    __metadata("design:type", String)
+], VoidItemDto.prototype, "reason", void 0);
