@@ -9,11 +9,10 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.CreateOrderDto = exports.CreatePaymentDto = exports.CreateOrderItemDto = void 0;
+exports.CreateOrderDto = exports.CreateOrderItemDto = void 0;
 const swagger_1 = require("@nestjs/swagger");
 const class_validator_1 = require("class-validator");
 const class_transformer_1 = require("class-transformer");
-const client_1 = require("@prisma/client");
 class CreateOrderItemDto {
 }
 exports.CreateOrderItemDto = CreateOrderItemDto;
@@ -43,27 +42,6 @@ __decorate([
     (0, class_validator_1.IsString)(),
     __metadata("design:type", String)
 ], CreateOrderItemDto.prototype, "notes", void 0);
-class CreatePaymentDto {
-}
-exports.CreatePaymentDto = CreatePaymentDto;
-__decorate([
-    (0, swagger_1.ApiProperty)({ enum: client_1.PaymentMethod, example: client_1.PaymentMethod.CASH }),
-    (0, class_validator_1.IsEnum)(client_1.PaymentMethod),
-    __metadata("design:type", String)
-], CreatePaymentDto.prototype, "method", void 0);
-__decorate([
-    (0, swagger_1.ApiProperty)({ example: 25.8 }),
-    (0, class_transformer_1.Type)(() => Number),
-    (0, class_validator_1.IsNumber)(),
-    (0, class_validator_1.IsPositive)(),
-    __metadata("design:type", Number)
-], CreatePaymentDto.prototype, "amount", void 0);
-__decorate([
-    (0, swagger_1.ApiPropertyOptional)(),
-    (0, class_validator_1.IsOptional)(),
-    (0, class_validator_1.IsString)(),
-    __metadata("design:type", String)
-], CreatePaymentDto.prototype, "reference", void 0);
 class CreateOrderDto {
 }
 exports.CreateOrderDto = CreateOrderDto;
@@ -81,22 +59,6 @@ __decorate([
     (0, class_transformer_1.Type)(() => CreateOrderItemDto),
     __metadata("design:type", Array)
 ], CreateOrderDto.prototype, "items", void 0);
-__decorate([
-    (0, swagger_1.ApiPropertyOptional)({ example: 0 }),
-    (0, class_validator_1.IsOptional)(),
-    (0, class_transformer_1.Type)(() => Number),
-    (0, class_validator_1.IsNumber)(),
-    (0, class_validator_1.Min)(0),
-    __metadata("design:type", Number)
-], CreateOrderDto.prototype, "discount", void 0);
-__decorate([
-    (0, swagger_1.ApiPropertyOptional)({ type: [CreatePaymentDto] }),
-    (0, class_validator_1.IsOptional)(),
-    (0, class_validator_1.IsArray)(),
-    (0, class_validator_1.ValidateNested)({ each: true }),
-    (0, class_transformer_1.Type)(() => CreatePaymentDto),
-    __metadata("design:type", Array)
-], CreateOrderDto.prototype, "payments", void 0);
 __decorate([
     (0, swagger_1.ApiPropertyOptional)(),
     (0, class_validator_1.IsOptional)(),

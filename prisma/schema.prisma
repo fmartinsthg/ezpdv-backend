@@ -83,6 +83,13 @@ enum PrepStation {
   OTHER
 }
 
+enum IdempotencyStatus {
+  PROCESSING
+  SUCCEEDED
+  FAILED
+  EXPIRED
+}
+
 /* ------------------------- Multi-tenant ------------------------- */
 
 model Tenant {
@@ -237,6 +244,30 @@ model FinancialTransaction {
   tenant        Tenant        @relation(fields: [tenantId], references: [id])
 
   @@index([tenantId, type, createdAt])
+}
+
+/* ------------------------- Idempotência ------------------------- */
+
+model IdempotencyKey {
+  id                String              @id @default(uuid())
+  tenantId          String
+  scope             String              // ex.: "orders:create"
+  key               String              // UUID v4 gerado pelo cliente
+  status            IdempotencyStatus   @default(PROCESSING)
+  requestHash       String
+  responseCode      Int?
+  responseBody      Json?
+  responseTruncated Boolean             @default(false)
+  resourceType      String?             // ex.: "order"
+  resourceId        String?             // id do recurso principal
+  errorCode         String?
+  errorMessage      String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  expiresAt         DateTime            // TTL = now + 48h
+
+  @@unique([tenantId, scope, key])
+  @@index([tenantId, scope, key])
 }
 
 /* ------------------------- Orders e Pagamentos ------------------------- */

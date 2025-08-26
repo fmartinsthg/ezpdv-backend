@@ -22,6 +22,7 @@ const prisma_module_1 = require("./prisma/prisma.module");
 const auth_module_1 = require("./auth/auth.module");
 const category_module_1 = require("./category/category.module");
 const platform_module_1 = require("./platform/platform.module");
+const idempotency_module_1 = require("./common/idempotency/idempotency.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -38,6 +39,7 @@ exports.AppModule = AppModule = __decorate([
             auth_module_1.AuthModule,
             category_module_1.CategoryModule,
             platform_module_1.PlatformModule,
+            idempotency_module_1.IdempotencyModule,
         ],
         controllers: [app_controller_1.AppController],
         providers: [

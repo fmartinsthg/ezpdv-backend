@@ -10,11 +10,8 @@ import {
   IsString,
   IsNumber,
   MinLength,
-  IsPositive,
-  IsEnum,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { PaymentMethod } from '@prisma/client';
 
 export class CreateOrderItemDto {
   @ApiProperty({ format: 'uuid' })
@@ -40,23 +37,6 @@ export class CreateOrderItemDto {
   notes?: string;
 }
 
-export class CreatePaymentDto {
-  @ApiProperty({ enum: PaymentMethod, example: PaymentMethod.CASH })
-  @IsEnum(PaymentMethod)
-  method!: PaymentMethod;
-
-  @ApiProperty({ example: 25.8 })
-  @Type(() => Number)
-  @IsNumber()
-  @IsPositive()
-  amount!: number;
-
-  @ApiPropertyOptional()
-  @IsOptional()
-  @IsString()
-  reference?: string;
-}
-
 export class CreateOrderDto {
   @ApiPropertyOptional({ example: '12', description: 'Número da comanda/mesa' })
   @IsOptional()
@@ -69,20 +49,6 @@ export class CreateOrderDto {
   @ValidateNested({ each: true })
   @Type(() => CreateOrderItemDto)
   items!: CreateOrderItemDto[];
-
-  @ApiPropertyOptional({ example: 0 })
-  @IsOptional()
-  @Type(() => Number)
-  @IsNumber()
-  @Min(0)
-  discount?: number;
-
-  @ApiPropertyOptional({ type: [CreatePaymentDto] })
-  @IsOptional()
-  @IsArray()
-  @ValidateNested({ each: true })
-  @Type(() => CreatePaymentDto)
-  payments?: CreatePaymentDto[];
 
   @ApiPropertyOptional()
   @IsOptional()

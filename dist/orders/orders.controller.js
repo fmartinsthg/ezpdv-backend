@@ -62,7 +62,7 @@ let OrdersController = class OrdersController {
 exports.OrdersController = OrdersController;
 __decorate([
     (0, swagger_1.ApiOperation)({ summary: 'Criar comanda (ORDER OPEN) - Idempotente' }),
-    (0, swagger_1.ApiHeader)({ name: 'Idempotency-Key', required: false }),
+    (0, swagger_1.ApiHeader)({ name: 'Idempotency-Key', required: false, description: 'Chave idempotente por tenant' }),
     (0, swagger_1.ApiResponse)({ status: 201, description: 'Order criada' }),
     (0, swagger_1.ApiParam)({ name: 'tenantId', type: 'string', format: 'uuid' }),
     (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR', 'USER'),
@@ -133,7 +133,7 @@ __decorate([
 ], OrdersController.prototype, "fireItems", null);
 __decorate([
     (0, swagger_1.ApiOperation)({ summary: 'VOID de item FIRED (requer aprovação extra)' }),
-    (0, swagger_1.ApiHeader)({ name: 'X-Approval-Token', required: true, description: 'JWT de MODERATOR/ADMIN/SUPERADMIN' }),
+    (0, swagger_1.ApiHeader)({ name: 'X-Approval-Token', required: true, description: 'JWT de MODERATOR/ADMIN/SUPERADMIN (pode usar \"Bearer ...\")' }),
     (0, swagger_1.ApiResponse)({ status: 200, description: 'Item anulado e estoque recreditado' }),
     (0, swagger_1.ApiParam)({ name: 'tenantId', type: 'string', format: 'uuid' }),
     (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR', 'USER') // USER pode solicitar, mas precisa approval token
@@ -163,10 +163,11 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], OrdersController.prototype, "cancel", null);
 __decorate([
-    (0, swagger_1.ApiOperation)({ summary: 'Fechar comanda (handoff para Sales)' }),
+    (0, swagger_1.ApiOperation)({ summary: 'Fechar comanda (handoff para módulo de Pagamentos/Caixa)' }),
     (0, swagger_1.ApiResponse)({ status: 200 }),
     (0, swagger_1.ApiParam)({ name: 'tenantId', type: 'string', format: 'uuid' }),
-    (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR'),
+    (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR', 'USER') // << permite garçom fechar e levar ao caixa
+    ,
     (0, common_1.Post)(':id/close'),
     __param(0, (0, tenant_decorator_1.TenantId)()),
     __param(1, (0, current_user_decorator_1.CurrentUser)()),
@@ -179,7 +180,7 @@ __decorate([
 exports.OrdersController = OrdersController = __decorate([
     (0, swagger_1.ApiTags)('orders'),
     (0, swagger_1.ApiBearerAuth)(),
-    (0, common_1.UseGuards)(jwt_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard) // TenantContextGuard já está global no seu app.module
+    (0, common_1.UseGuards)(jwt_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard) // TenantContextGuard já está global
     ,
     (0, common_1.Controller)('tenants/:tenantId/orders'),
     __metadata("design:paramtypes", [orders_service_1.OrdersService])

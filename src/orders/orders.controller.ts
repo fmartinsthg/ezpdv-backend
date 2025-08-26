@@ -2,7 +2,6 @@ import {
   Controller,
   Post,
   Get,
-  Patch,
   Body,
   Param,
   ParseUUIDPipe,
@@ -36,13 +35,13 @@ import {
 
 @ApiTags('orders')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard) // TenantContextGuard já está global no seu app.module
+@UseGuards(JwtAuthGuard, RolesGuard) // TenantContextGuard já está global
 @Controller('tenants/:tenantId/orders')
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
 
   @ApiOperation({ summary: 'Criar comanda (ORDER OPEN) - Idempotente' })
-  @ApiHeader({ name: 'Idempotency-Key', required: false })
+  @ApiHeader({ name: 'Idempotency-Key', required: false, description: 'Chave idempotente por tenant' })
   @ApiResponse({ status: 201, description: 'Order criada' })
   @ApiParam({ name: 'tenantId', type: 'string', format: 'uuid' })
   @Roles('ADMIN', 'MODERATOR', 'USER')
@@ -113,7 +112,7 @@ export class OrdersController {
   }
 
   @ApiOperation({ summary: 'VOID de item FIRED (requer aprovação extra)' })
-  @ApiHeader({ name: 'X-Approval-Token', required: true, description: 'JWT de MODERATOR/ADMIN/SUPERADMIN' })
+  @ApiHeader({ name: 'X-Approval-Token', required: true, description: 'JWT de MODERATOR/ADMIN/SUPERADMIN (pode usar \"Bearer ...\")' })
   @ApiResponse({ status: 200, description: 'Item anulado e estoque recreditado' })
   @ApiParam({ name: 'tenantId', type: 'string', format: 'uuid' })
   @Roles('ADMIN', 'MODERATOR', 'USER') // USER pode solicitar, mas precisa approval token
@@ -145,10 +144,10 @@ export class OrdersController {
     return this.ordersService.cancel(tenantId, user, id);
   }
 
-  @ApiOperation({ summary: 'Fechar comanda (handoff para Sales)' })
+  @ApiOperation({ summary: 'Fechar comanda (handoff para módulo de Pagamentos/Caixa)' })
   @ApiResponse({ status: 200 })
   @ApiParam({ name: 'tenantId', type: 'string', format: 'uuid' })
-  @Roles('ADMIN', 'MODERATOR')
+  @Roles('ADMIN', 'MODERATOR', 'USER') // << permite garçom fechar e levar ao caixa
   @Post(':id/close')
   async close(
     @TenantId() tenantId: string,

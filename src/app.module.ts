@@ -16,6 +16,8 @@ import { PrismaModule } from "./prisma/prisma.module";
 import { AuthModule } from "./auth/auth.module";
 import { CategoryModule } from "./category/category.module";
 import { PlatformModule } from "./platform/platform.module";
+import { IdempotencyModule } from './common/idempotency/idempotency.module';
+
 
 @Module({
   imports: [
@@ -29,6 +31,7 @@ import { PlatformModule } from "./platform/platform.module";
     AuthModule,
     CategoryModule,
     PlatformModule,
+    IdempotencyModule,
   ],
   controllers: [AppController],
   providers: [

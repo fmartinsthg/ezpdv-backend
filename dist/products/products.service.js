@@ -23,23 +23,23 @@ let ProductsService = class ProductsService {
      * ADMIN / MODERATOR também podem gerenciar.
      */
     canManage(user) {
-        const sys = user?.systemRole ? String(user.systemRole).toUpperCase() : '';
-        if (sys === 'SUPERADMIN')
+        const sys = user?.systemRole ? String(user.systemRole).toUpperCase() : "";
+        if (sys === "SUPERADMIN")
             return true;
-        const r = user?.role ? String(user.role).toUpperCase() : '';
-        return r === 'ADMIN' || r === 'MODERATOR';
+        const r = user?.role ? String(user.role).toUpperCase() : "";
+        return r === "ADMIN" || r === "MODERATOR";
     }
     async findAll(tenantId, query) {
-        const { q, categoryId, isActive, sortBy = 'name', sortOrder = 'asc', page = 1, limit = 10, } = query;
+        const { q, categoryId, isActive, sortBy = "name", sortOrder = "asc", page = 1, limit = 10, } = query;
         const take = Math.min(Number(limit) || 10, 100);
         const skip = (Number(page) - 1) * take;
         const where = { tenantId };
         // busca textual
         if (q && q.trim().length > 0) {
             where.OR = [
-                { name: { contains: q, mode: 'insensitive' } },
-                { description: { contains: q, mode: 'insensitive' } },
-                { barcode: { contains: q, mode: 'insensitive' } },
+                { name: { contains: q, mode: "insensitive" } },
+                { description: { contains: q, mode: "insensitive" } },
+                { barcode: { contains: q, mode: "insensitive" } },
             ];
         }
         // filtro por categoria
@@ -48,11 +48,11 @@ let ProductsService = class ProductsService {
         }
         // filtro por ativo
         if (isActive !== undefined) {
-            if (typeof isActive === 'boolean') {
+            if (typeof isActive === "boolean") {
                 where.isActive = isActive;
             }
-            else if (typeof isActive === 'string') {
-                where.isActive = isActive.toLowerCase() === 'true';
+            else if (typeof isActive === "string") {
+                where.isActive = isActive.toLowerCase() === "true";
             }
         }
         // ordenação
@@ -85,12 +85,12 @@ let ProductsService = class ProductsService {
             include: { category: { select: { id: true, name: true } } },
         });
         if (!product)
-            throw new common_1.NotFoundException('Produto não encontrado');
+            throw new common_1.NotFoundException("Produto não encontrado");
         return product;
     }
     async create(user, tenantId, data) {
         if (!this.canManage(user)) {
-            throw new common_1.ForbiddenException('Sem permissão para criar produtos.');
+            throw new common_1.ForbiddenException("Sem permissão para criar produtos.");
         }
         // valida categoria dentro do tenant (se enviada)
         if (data.categoryId) {
@@ -99,7 +99,7 @@ let ProductsService = class ProductsService {
                 select: { id: true },
             });
             if (!category) {
-                throw new common_1.NotFoundException('Categoria não encontrada para este restaurante.');
+                throw new common_1.NotFoundException("Categoria não encontrada para este restaurante.");
             }
         }
         try {
@@ -108,12 +108,12 @@ let ProductsService = class ProductsService {
                     tenantId, // obrigatório no multi-tenant
                     name: data.name,
                     description: data.description,
-                    price: new client_1.Prisma.Decimal(typeof data.price === 'string' ? data.price : String(data.price)),
+                    price: new client_1.Prisma.Decimal(typeof data.price === "string" ? data.price : String(data.price)),
                     // `cost` é opcional em alguns contextos — ajuste conforme seu DTO
                     cost: data.cost !== undefined
-                        ? new client_1.Prisma.Decimal(typeof data.cost === 'string' ? data.cost : String(data.cost))
-                        : new client_1.Prisma.Decimal('0'),
-                    stock: data.stock,
+                        ? new client_1.Prisma.Decimal(typeof data.cost === "string" ? data.cost : String(data.cost))
+                        : new client_1.Prisma.Decimal("0"),
+                    stock: typeof data.stock === "string" ? Number(data.stock) : data.stock,
                     categoryId: data.categoryId,
                     isActive: true,
                 },
@@ -121,22 +121,22 @@ let ProductsService = class ProductsService {
             });
         }
         catch (err) {
-            if (err.code === '22P02') {
-                throw new common_1.BadRequestException('IDs devem ser UUIDs válidos.');
+            if (err.code === "22P02") {
+                throw new common_1.BadRequestException("IDs devem ser UUIDs válidos.");
             }
-            if (err.code === 'P2003') {
-                throw new common_1.NotFoundException('Categoria informada não existe.');
+            if (err.code === "P2003") {
+                throw new common_1.NotFoundException("Categoria informada não existe.");
             }
-            if (err.code === 'P2002') {
+            if (err.code === "P2002") {
                 // unique (tenantId, name) ou (tenantId, barcode)
-                throw new common_1.BadRequestException('Dados duplicados para este restaurante.');
+                throw new common_1.BadRequestException("Dados duplicados para este restaurante.");
             }
             throw err;
         }
     }
     async update(user, tenantId, id, data) {
         if (!this.canManage(user)) {
-            throw new common_1.ForbiddenException('Sem permissão para atualizar produtos.');
+            throw new common_1.ForbiddenException("Sem permissão para atualizar produtos.");
         }
         // garante escopo (existe no tenant)
         await this.findOne(tenantId, id);
@@ -147,14 +147,18 @@ let ProductsService = class ProductsService {
                 select: { id: true },
             });
             if (!category) {
-                throw new common_1.NotFoundException('Categoria informada não existe neste restaurante.');
+                throw new common_1.NotFoundException("Categoria informada não existe neste restaurante.");
             }
         }
         try {
             const payload = {
                 name: data.name,
                 description: data.description,
-                stock: data.stock,
+                stock: data.stock !== undefined
+                    ? typeof data.stock === "string"
+                        ? Number(data.stock)
+                        : data.stock
+                    : undefined,
                 ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
             };
             if (data.categoryId !== undefined) {
@@ -163,10 +167,10 @@ let ProductsService = class ProductsService {
                     : { disconnect: true };
             }
             if (data.price !== undefined) {
-                payload.price = new client_1.Prisma.Decimal(typeof data.price === 'string' ? data.price : String(data.price));
+                payload.price = new client_1.Prisma.Decimal(typeof data.price === "string" ? data.price : String(data.price));
             }
             if (data.cost !== undefined) {
-                payload.cost = new client_1.Prisma.Decimal(typeof data.cost === 'string' ? data.cost : String(data.cost));
+                payload.cost = new client_1.Prisma.Decimal(typeof data.cost === "string" ? data.cost : String(data.cost));
             }
             return await this.prisma.product.update({
                 where: { id },
@@ -175,24 +179,24 @@ let ProductsService = class ProductsService {
             });
         }
         catch (err) {
-            if (err.code === 'P2025') {
-                throw new common_1.NotFoundException('Produto não encontrado');
+            if (err.code === "P2025") {
+                throw new common_1.NotFoundException("Produto não encontrado");
             }
-            if (err.code === '22P02') {
-                throw new common_1.BadRequestException('IDs devem ser UUIDs válidos.');
+            if (err.code === "22P02") {
+                throw new common_1.BadRequestException("IDs devem ser UUIDs válidos.");
             }
-            if (err.code === 'P2003') {
-                throw new common_1.NotFoundException('Categoria informada não existe.');
+            if (err.code === "P2003") {
+                throw new common_1.NotFoundException("Categoria informada não existe.");
             }
-            if (err.code === 'P2002') {
-                throw new common_1.BadRequestException('Dados duplicados para este restaurante.');
+            if (err.code === "P2002") {
+                throw new common_1.BadRequestException("Dados duplicados para este restaurante.");
             }
             throw err;
         }
     }
     async delete(user, tenantId, id) {
         if (!this.canManage(user)) {
-            throw new common_1.ForbiddenException('Sem permissão para remover produtos.');
+            throw new common_1.ForbiddenException("Sem permissão para remover produtos.");
         }
         // garante escopo (existe no tenant)
         await this.findOne(tenantId, id);
@@ -200,11 +204,11 @@ let ProductsService = class ProductsService {
             return await this.prisma.product.delete({ where: { id } });
         }
         catch (err) {
-            if (err.code === 'P2025') {
-                throw new common_1.NotFoundException('Produto não encontrado');
+            if (err.code === "P2025") {
+                throw new common_1.NotFoundException("Produto não encontrado");
             }
-            if (err.code === '22P02') {
-                throw new common_1.BadRequestException('ID deve ser um UUID válido.');
+            if (err.code === "22P02") {
+                throw new common_1.BadRequestException("ID deve ser um UUID válido.");
             }
             throw err;
         }
