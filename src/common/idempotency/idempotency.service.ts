@@ -2,32 +2,38 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
-} from '@nestjs/common';
-import { Prisma, IdempotencyStatus } from '@prisma/client';
-import { PrismaService } from '../../prisma/prisma.service';
+} from "@nestjs/common";
+import { Prisma, IdempotencyStatus } from "@prisma/client";
+import { PrismaService } from "../../prisma/prisma.service";
 import {
   IDEMPOTENCY_ALLOWED_SCOPES,
   IDEMPOTENCY_DEFAULTS,
-} from './idempotency.constants';
+} from "./idempotency.constants";
 
 type BeginResult =
-  | { action: 'REPLAY'; responseCode: number; responseBody: any }
-  | { action: 'PROCEED'; recordId: string }
-  | { action: 'IN_PROGRESS' };
+  | { action: "REPLAY"; responseCode: number; responseBody: any }
+  | { action: "PROCEED"; recordId: string }
+  | { action: "IN_PROGRESS" };
 
 @Injectable()
 export class IdempotencyService {
   constructor(private readonly prisma: PrismaService) {}
 
-  validateHeadersOrThrow(scopeFromRoute: string, scopeHeader?: string, keyHeader?: string) {
+  validateHeadersOrThrow(
+    scopeFromRoute: string,
+    scopeHeader?: string,
+    keyHeader?: string
+  ) {
     if (!scopeHeader) {
-      throw new BadRequestException('Idempotency-Scope é obrigatório.');
+      throw new BadRequestException("Idempotency-Scope é obrigatório.");
     }
     if (scopeHeader !== scopeFromRoute) {
-      throw new BadRequestException('Idempotency-Scope inválido para este endpoint.');
+      throw new BadRequestException(
+        "Idempotency-Scope inválido para este endpoint."
+      );
     }
     if (!keyHeader) {
-      throw new BadRequestException('Idempotency-Key é obrigatório.');
+      throw new BadRequestException("Idempotency-Key é obrigatório.");
     }
   }
 
@@ -35,14 +41,16 @@ export class IdempotencyService {
     tenantId: string,
     scope: string,
     key: string,
-    requestHash: string,
+    requestHash: string
   ): Promise<BeginResult> {
     if (!IDEMPOTENCY_ALLOWED_SCOPES.has(scope)) {
-      throw new BadRequestException('Escopo de idempotência não permitido.');
+      throw new BadRequestException("Escopo de idempotência não permitido.");
     }
 
     const now = new Date();
-    const expiresAt = new Date(now.getTime() + IDEMPOTENCY_DEFAULTS.TTL_HOURS * 3600 * 1000);
+    const expiresAt = new Date(
+      now.getTime() + IDEMPOTENCY_DEFAULTS.TTL_HOURS * 3600 * 1000
+    );
 
     try {
       const created = await this.prisma.idempotencyKey.create({
@@ -56,9 +64,9 @@ export class IdempotencyService {
         },
         select: { id: true },
       });
-      return { action: 'PROCEED', recordId: created.id };
+      return { action: "PROCEED", recordId: created.id };
     } catch (e: any) {
-      if (e?.code !== 'P2002') throw e;
+      if (e?.code !== "P2002") throw e;
     }
 
     const existing = await this.prisma.idempotencyKey.findUnique({
@@ -77,10 +85,13 @@ export class IdempotencyService {
         },
         select: { id: true },
       });
-      return { action: 'PROCEED', recordId: created.id };
+      return { action: "PROCEED", recordId: created.id };
     }
 
-    if (existing.expiresAt <= now || existing.status === IdempotencyStatus.EXPIRED) {
+    if (
+      existing.expiresAt <= now ||
+      existing.status === IdempotencyStatus.EXPIRED
+    ) {
       const updated = await this.prisma.idempotencyKey.update({
         where: { id: existing.id },
         data: {
@@ -96,15 +107,15 @@ export class IdempotencyService {
         },
         select: { id: true },
       });
-      return { action: 'PROCEED', recordId: updated.id };
+      return { action: "PROCEED", recordId: updated.id };
     }
 
     if (existing.status === IdempotencyStatus.SUCCEEDED) {
       if (existing.requestHash !== requestHash) {
-        throw new ConflictException('IDEMPOTENCY_PAYLOAD_MISMATCH');
+        throw new ConflictException("IDEMPOTENCY_PAYLOAD_MISMATCH");
       }
       return {
-        action: 'REPLAY',
+        action: "REPLAY",
         responseCode: existing.responseCode ?? 200,
         responseBody: existing.responseBody ?? {},
       };
@@ -122,24 +133,30 @@ export class IdempotencyService {
         },
         select: { id: true },
       });
-      return { action: 'PROCEED', recordId: updated.id };
+      return { action: "PROCEED", recordId: updated.id };
     }
 
-    return { action: 'IN_PROGRESS' };
+    return { action: "IN_PROGRESS" };
   }
 
   async succeed(
     recordId: string,
     responseCode: number,
     responseBody: any,
-    options?: { resourceType?: string; resourceId?: string; truncateAtBytes?: number },
+    options?: {
+      resourceType?: string;
+      resourceId?: string;
+      truncateAtBytes?: number;
+    }
   ) {
-    const limit = options?.truncateAtBytes ?? IDEMPOTENCY_DEFAULTS.SNAPSHOT_MAX_BYTES;
+    const limit =
+      options?.truncateAtBytes ?? IDEMPOTENCY_DEFAULTS.SNAPSHOT_MAX_BYTES;
     const raw = JSON.stringify(responseBody ?? {});
-    const bytes = Buffer.byteLength(raw, 'utf8');
+    const bytes = Buffer.byteLength(raw, "utf8");
 
     // ❗️Para input de JSON use Prisma.InputJsonValue
-    let bodyToStore: Prisma.InputJsonValue = (responseBody ?? {}) as Prisma.InputJsonValue;
+    let bodyToStore: Prisma.InputJsonValue = (responseBody ??
+      {}) as Prisma.InputJsonValue;
     let truncated = false;
 
     if (bytes > limit) {

@@ -20,18 +20,18 @@ let IdempotencyService = class IdempotencyService {
     }
     validateHeadersOrThrow(scopeFromRoute, scopeHeader, keyHeader) {
         if (!scopeHeader) {
-            throw new common_1.BadRequestException('Idempotency-Scope é obrigatório.');
+            throw new common_1.BadRequestException("Idempotency-Scope é obrigatório.");
         }
         if (scopeHeader !== scopeFromRoute) {
-            throw new common_1.BadRequestException('Idempotency-Scope inválido para este endpoint.');
+            throw new common_1.BadRequestException("Idempotency-Scope inválido para este endpoint.");
         }
         if (!keyHeader) {
-            throw new common_1.BadRequestException('Idempotency-Key é obrigatório.');
+            throw new common_1.BadRequestException("Idempotency-Key é obrigatório.");
         }
     }
     async beginOrReplay(tenantId, scope, key, requestHash) {
         if (!idempotency_constants_1.IDEMPOTENCY_ALLOWED_SCOPES.has(scope)) {
-            throw new common_1.BadRequestException('Escopo de idempotência não permitido.');
+            throw new common_1.BadRequestException("Escopo de idempotência não permitido.");
         }
         const now = new Date();
         const expiresAt = new Date(now.getTime() + idempotency_constants_1.IDEMPOTENCY_DEFAULTS.TTL_HOURS * 3600 * 1000);
@@ -47,10 +47,10 @@ let IdempotencyService = class IdempotencyService {
                 },
                 select: { id: true },
             });
-            return { action: 'PROCEED', recordId: created.id };
+            return { action: "PROCEED", recordId: created.id };
         }
         catch (e) {
-            if (e?.code !== 'P2002')
+            if (e?.code !== "P2002")
                 throw e;
         }
         const existing = await this.prisma.idempotencyKey.findUnique({
@@ -68,9 +68,10 @@ let IdempotencyService = class IdempotencyService {
                 },
                 select: { id: true },
             });
-            return { action: 'PROCEED', recordId: created.id };
+            return { action: "PROCEED", recordId: created.id };
         }
-        if (existing.expiresAt <= now || existing.status === client_1.IdempotencyStatus.EXPIRED) {
+        if (existing.expiresAt <= now ||
+            existing.status === client_1.IdempotencyStatus.EXPIRED) {
             const updated = await this.prisma.idempotencyKey.update({
                 where: { id: existing.id },
                 data: {
@@ -86,14 +87,14 @@ let IdempotencyService = class IdempotencyService {
                 },
                 select: { id: true },
             });
-            return { action: 'PROCEED', recordId: updated.id };
+            return { action: "PROCEED", recordId: updated.id };
         }
         if (existing.status === client_1.IdempotencyStatus.SUCCEEDED) {
             if (existing.requestHash !== requestHash) {
-                throw new common_1.ConflictException('IDEMPOTENCY_PAYLOAD_MISMATCH');
+                throw new common_1.ConflictException("IDEMPOTENCY_PAYLOAD_MISMATCH");
             }
             return {
-                action: 'REPLAY',
+                action: "REPLAY",
                 responseCode: existing.responseCode ?? 200,
                 responseBody: existing.responseBody ?? {},
             };
@@ -110,16 +111,17 @@ let IdempotencyService = class IdempotencyService {
                 },
                 select: { id: true },
             });
-            return { action: 'PROCEED', recordId: updated.id };
+            return { action: "PROCEED", recordId: updated.id };
         }
-        return { action: 'IN_PROGRESS' };
+        return { action: "IN_PROGRESS" };
     }
     async succeed(recordId, responseCode, responseBody, options) {
         const limit = options?.truncateAtBytes ?? idempotency_constants_1.IDEMPOTENCY_DEFAULTS.SNAPSHOT_MAX_BYTES;
         const raw = JSON.stringify(responseBody ?? {});
-        const bytes = Buffer.byteLength(raw, 'utf8');
+        const bytes = Buffer.byteLength(raw, "utf8");
         // ❗️Para input de JSON use Prisma.InputJsonValue
-        let bodyToStore = (responseBody ?? {});
+        let bodyToStore = (responseBody ??
+            {});
         let truncated = false;
         if (bytes > limit) {
             bodyToStore = {
