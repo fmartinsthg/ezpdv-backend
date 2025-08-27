@@ -22,11 +22,7 @@ enum TenantRole {
   USER        // atendente/garçom
 }
 
-/**
- * Orders: status simplificado
- * (ANTES: OPEN, PAID, CANCELED)
- * AGORA:  OPEN, CLOSED, CANCELED
- */
+
 enum OrderStatus {
   OPEN
   CLOSED
@@ -35,8 +31,9 @@ enum OrderStatus {
 
 /**
  * Itens do pedido: ciclo de vida por item
- * STAGED (carrinho) -> FIRED (produzindo) -> CLOSED | VOID
+ * STAGED (carrinho) -> FIRED (produzindo) -> CLOSED (fechar)| VOID (cancelar)
  */
+
 enum OrderItemStatus {
   STAGED
   FIRED
@@ -48,7 +45,21 @@ enum PaymentMethod {
   CASH
   CARD
   PIX
+  VOUCHER
   OTHER
+}
+
+enum PaymentStatus {
+  PENDING
+  CAPTURED
+  REFUNDED
+  CANCELED
+}
+
+enum PaymentTransactionType {
+  CAPTURE
+  REFUND
+  CANCEL
 }
 
 enum InventoryUnit {
@@ -136,6 +147,10 @@ model User {
   // Atores de VOID
   voidRequestedItems       OrderItem[]               @relation("VoidRequestedBy")      // NEW
   voidApprovedItems        OrderItem[]               @relation("VoidApprovedBy")       // NEW
+
+  // Payments (inversos)
+  createdPayments        Payment[]            @relation("UserCreatedPayments")
+  paymentTransactions    PaymentTransaction[] @relation("UserPaymentTransactions")
 }
 
 model UserTenant {
@@ -340,17 +355,53 @@ model OrderItem {
 }
 
 model Payment {
-  id         String    @id @default(uuid())
-  orderId    String
+  id              String         @id @default(uuid())
+  orderId         String
+  tenantId        String
+
+  method          PaymentMethod
+  amount          Decimal        @db.Decimal(10, 2)
+  status          PaymentStatus  // PENDING|CAPTURED|REFUNDED|CANCELED
+
+  provider        String?
+  providerTxnId   String?
+  metadata        Json?
+
+  createdByUserId String
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  // Relações
+  order           Order          @relation(fields: [orderId], references: [id])
+  tenant          Tenant         @relation(fields: [tenantId], references: [id])
+  createdBy       User           @relation("UserCreatedPayments", fields: [createdByUserId], references: [id])
+
+  transactions    PaymentTransaction[]
+
+  // Índices
+  @@index([tenantId, orderId])
+  @@index([tenantId, status])
+  @@index([tenantId, createdAt])
+  @@unique([tenantId, providerTxnId])
+}
+
+model PaymentTransaction {
+  id         String                   @id @default(uuid())
   tenantId   String
-  method     PaymentMethod
-  amount     Decimal   @db.Decimal(10, 2)
+  paymentId  String
+  type       PaymentTransactionType
+  amount     Decimal                  @db.Decimal(10, 2)
+  reason     String?
+  byUserId   String
+  createdAt  DateTime                 @default(now())
 
-  order      Order     @relation(fields: [orderId], references: [id])
-  tenant     Tenant    @relation(fields: [tenantId], references: [id])
+  // Relações
+  payment    Payment                  @relation(fields: [paymentId], references: [id])
+  byUser     User                     @relation("UserPaymentTransactions", fields: [byUserId], references: [id])
 
-  @@index([tenantId, orderId, createdAt])
-  createdAt  DateTime  @default(now())              // NEW: padroniza trilha temporal
+  // Índices
+  @@index([tenantId, createdAt])
+  @@index([tenantId, type])
 }
 
 /* ------------------------- Estoque, Receita e Movimentação ------------------------- */

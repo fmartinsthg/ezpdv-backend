@@ -27,12 +27,13 @@ const fire_dto_1 = require("./dto/fire.dto");
 const void_item_dto_1 = require("./dto/void-item.dto");
 const close_order_dto_1 = require("./dto/close-order.dto");
 const swagger_1 = require("@nestjs/swagger");
+const idempotency_decorator_1 = require("../common/idempotency/idempotency.decorator");
 let OrdersController = class OrdersController {
     constructor(ordersService) {
         this.ordersService = ordersService;
     }
-    async create(tenantId, user, dto, idempotencyKey) {
-        return this.ordersService.create(tenantId, user, dto, idempotencyKey);
+    async create(tenantId, user, dto, _idempotencyKey) {
+        return this.ordersService.create(tenantId, user, dto);
     }
     async findAll(tenantId, user, query) {
         return this.ordersService.findAll(tenantId, user, query);
@@ -57,15 +58,18 @@ let OrdersController = class OrdersController {
     }
     async close(tenantId, user, id, dto) {
         return this.ordersService.close(tenantId, user, id, dto);
+        // Interceptor global cuida da idempotência, snapshot e 429/409.
     }
 };
 exports.OrdersController = OrdersController;
 __decorate([
     (0, swagger_1.ApiOperation)({ summary: 'Criar comanda (ORDER OPEN) - Idempotente' }),
-    (0, swagger_1.ApiHeader)({ name: 'Idempotency-Key', required: false, description: 'Chave idempotente por tenant' }),
+    (0, swagger_1.ApiHeader)({ name: 'Idempotency-Key', required: true, description: 'UUID v4 por request' }),
+    (0, swagger_1.ApiHeader)({ name: 'Idempotency-Scope', required: true, description: 'Valor fixo: orders:create' }),
     (0, swagger_1.ApiResponse)({ status: 201, description: 'Order criada' }),
     (0, swagger_1.ApiParam)({ name: 'tenantId', type: 'string', format: 'uuid' }),
     (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR', 'USER'),
+    (0, idempotency_decorator_1.Idempotent)('orders:create'),
     (0, common_1.Post)(),
     __param(0, (0, tenant_decorator_1.TenantId)()),
     __param(1, (0, current_user_decorator_1.CurrentUser)()),
@@ -103,10 +107,12 @@ __decorate([
 ], OrdersController.prototype, "findOne", null);
 __decorate([
     (0, swagger_1.ApiOperation)({ summary: 'Adicionar itens STAGED na comanda' }),
-    (0, swagger_1.ApiHeader)({ name: 'Idempotency-Key', required: false }),
+    (0, swagger_1.ApiHeader)({ name: 'Idempotency-Key', required: true }),
+    (0, swagger_1.ApiHeader)({ name: 'Idempotency-Scope', required: true, description: 'Valor fixo: orders:append-items' }),
     (0, swagger_1.ApiResponse)({ status: 200 }),
     (0, swagger_1.ApiParam)({ name: 'tenantId', type: 'string', format: 'uuid' }),
     (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR', 'USER'),
+    (0, idempotency_decorator_1.Idempotent)('orders:append-items'),
     (0, common_1.Post)(':id/items'),
     __param(0, (0, tenant_decorator_1.TenantId)()),
     __param(1, (0, current_user_decorator_1.CurrentUser)()),
@@ -118,10 +124,12 @@ __decorate([
 ], OrdersController.prototype, "appendItems", null);
 __decorate([
     (0, swagger_1.ApiOperation)({ summary: 'Disparar (FIRE) itens STAGED para produção' }),
-    (0, swagger_1.ApiHeader)({ name: 'Idempotency-Key', required: false }),
+    (0, swagger_1.ApiHeader)({ name: 'Idempotency-Key', required: true }),
+    (0, swagger_1.ApiHeader)({ name: 'Idempotency-Scope', required: true, description: 'Valor fixo: orders:fire' }),
     (0, swagger_1.ApiResponse)({ status: 200, description: 'Itens marcados como FIRED e estoque debitado' }),
     (0, swagger_1.ApiParam)({ name: 'tenantId', type: 'string', format: 'uuid' }),
     (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR', 'USER'),
+    (0, idempotency_decorator_1.Idempotent)('orders:fire'),
     (0, common_1.Post)(':id/fire'),
     __param(0, (0, tenant_decorator_1.TenantId)()),
     __param(1, (0, current_user_decorator_1.CurrentUser)()),
@@ -133,11 +141,14 @@ __decorate([
 ], OrdersController.prototype, "fireItems", null);
 __decorate([
     (0, swagger_1.ApiOperation)({ summary: 'VOID de item FIRED (requer aprovação extra)' }),
-    (0, swagger_1.ApiHeader)({ name: 'X-Approval-Token', required: true, description: 'JWT de MODERATOR/ADMIN/SUPERADMIN (pode usar \"Bearer ...\")' }),
+    (0, swagger_1.ApiHeader)({ name: 'X-Approval-Token', required: true, description: 'JWT de MODERATOR/ADMIN/SUPERADMIN (pode usar "Bearer ...")' }),
+    (0, swagger_1.ApiHeader)({ name: 'Idempotency-Key', required: true }),
+    (0, swagger_1.ApiHeader)({ name: 'Idempotency-Scope', required: true, description: 'Valor fixo: orders:void-item' }),
     (0, swagger_1.ApiResponse)({ status: 200, description: 'Item anulado e estoque recreditado' }),
     (0, swagger_1.ApiParam)({ name: 'tenantId', type: 'string', format: 'uuid' }),
     (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR', 'USER') // USER pode solicitar, mas precisa approval token
     ,
+    (0, idempotency_decorator_1.Idempotent)('orders:void-item'),
     (0, common_1.Post)(':id/items/:itemId/void'),
     __param(0, (0, tenant_decorator_1.TenantId)()),
     __param(1, (0, current_user_decorator_1.CurrentUser)()),
@@ -151,9 +162,12 @@ __decorate([
 ], OrdersController.prototype, "voidItem", null);
 __decorate([
     (0, swagger_1.ApiOperation)({ summary: 'Cancelar comanda (somente sem itens ativos)' }),
+    (0, swagger_1.ApiHeader)({ name: 'Idempotency-Key', required: true }),
+    (0, swagger_1.ApiHeader)({ name: 'Idempotency-Scope', required: true, description: 'Valor fixo: orders:cancel' }),
     (0, swagger_1.ApiResponse)({ status: 200 }),
     (0, swagger_1.ApiParam)({ name: 'tenantId', type: 'string', format: 'uuid' }),
     (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR'),
+    (0, idempotency_decorator_1.Idempotent)('orders:cancel'),
     (0, common_1.Post)(':id/cancel'),
     __param(0, (0, tenant_decorator_1.TenantId)()),
     __param(1, (0, current_user_decorator_1.CurrentUser)()),
@@ -164,10 +178,13 @@ __decorate([
 ], OrdersController.prototype, "cancel", null);
 __decorate([
     (0, swagger_1.ApiOperation)({ summary: 'Fechar comanda (handoff para módulo de Pagamentos/Caixa)' }),
+    (0, swagger_1.ApiHeader)({ name: 'Idempotency-Key', required: true }),
+    (0, swagger_1.ApiHeader)({ name: 'Idempotency-Scope', required: true, description: 'Valor fixo: orders:close' }),
     (0, swagger_1.ApiResponse)({ status: 200 }),
     (0, swagger_1.ApiParam)({ name: 'tenantId', type: 'string', format: 'uuid' }),
-    (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR', 'USER') // << permite garçom fechar e levar ao caixa
+    (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR', 'USER') // permite garçom fechar e levar ao caixa
     ,
+    (0, idempotency_decorator_1.Idempotent)('orders:close'),
     (0, common_1.Post)(':id/close'),
     __param(0, (0, tenant_decorator_1.TenantId)()),
     __param(1, (0, current_user_decorator_1.CurrentUser)()),

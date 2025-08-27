@@ -16,8 +16,8 @@ import { PrismaModule } from "./prisma/prisma.module";
 import { AuthModule } from "./auth/auth.module";
 import { CategoryModule } from "./category/category.module";
 import { PlatformModule } from "./platform/platform.module";
-import { IdempotencyModule } from './common/idempotency/idempotency.module';
-
+import { IdempotencyModule } from "./common/idempotency/idempotency.module";
+import { PaymentsModule } from "./payments/payments.module";
 
 @Module({
   imports: [
@@ -32,6 +32,7 @@ import { IdempotencyModule } from './common/idempotency/idempotency.module';
     CategoryModule,
     PlatformModule,
     IdempotencyModule,
+    PaymentsModule,
   ],
   controllers: [AppController],
   providers: [
