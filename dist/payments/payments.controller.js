@@ -24,8 +24,8 @@ const jwt_guard_1 = require("../auth/jwt.guard");
 const roles_guard_1 = require("../auth/roles.guard");
 const roles_decorator_1 = require("../auth/roles.decorator");
 const client_1 = require("@prisma/client");
-const current_user_decorator_1 = require("../common/decorators/current-user.decorator");
-const tenant_id_decorator_1 = require("../common/decorators/tenant-id.decorator");
+const current_user_decorator_1 = require("../auth/current-user.decorator");
+const tenant_decorator_1 = require("../common/tenant/tenant.decorator");
 const payments_approval_guard_1 = require("./payments.approval.guard");
 const idempotency_decorator_1 = require("../common/idempotency/idempotency.decorator");
 let PaymentsController = class PaymentsController {
@@ -33,8 +33,13 @@ let PaymentsController = class PaymentsController {
         this.payments = payments;
     }
     async createAndCapture(tenantId, orderId, dto, user) {
+        // Alguns tokens expõem `sub`, outros `id`; padroniza aqui
+        const actorId = user?.id ?? user?.sub;
+        if (!actorId) {
+            throw new common_1.BadRequestException('Invalid authenticated user (missing id/sub).');
+        }
         dto.orderId = orderId;
-        return this.payments.capture(tenantId, dto, user.id);
+        return this.payments.capture(tenantId, dto, actorId);
     }
     async listByOrder(tenantId, orderId) {
         return this.payments.listByOrder(tenantId, orderId);
@@ -43,15 +48,17 @@ let PaymentsController = class PaymentsController {
         return this.payments.listByTenant(tenantId, query);
     }
     async refund(tenantId, paymentId, dto, req) {
-        const approvalUserId = req?.approvalUser?.id;
-        if (!approvalUserId)
-            throw new common_1.BadRequestException('Missing approval user context');
+        const approvalUserId = req?.approvalUser?.id ?? req?.approvalUser?.sub;
+        if (!approvalUserId) {
+            throw new common_1.BadRequestException('Missing approval user id/sub');
+        }
         return this.payments.refund(tenantId, paymentId, dto, approvalUserId);
     }
     async cancel(tenantId, paymentId, dto, req) {
-        const approvalUserId = req?.approvalUser?.id;
-        if (!approvalUserId)
-            throw new common_1.BadRequestException('Missing approval user context');
+        const approvalUserId = req?.approvalUser?.id ?? req?.approvalUser?.sub;
+        if (!approvalUserId) {
+            throw new common_1.BadRequestException('Missing approval user id/sub');
+        }
         return this.payments.cancel(tenantId, paymentId, dto, approvalUserId);
     }
 };
@@ -68,7 +75,7 @@ __decorate([
     (0, swagger_1.ApiParam)({ name: 'orderId', example: '6fbc4c11-5b30-4ab6-a1a9-2b20b847da0b' }),
     (0, swagger_1.ApiResponse)({ status: 201, description: 'Pagamento capturado' }),
     (0, swagger_1.ApiResponse)({ status: 409, description: 'Conflito de soma ou idempotência' }),
-    __param(0, (0, tenant_id_decorator_1.TenantId)()),
+    __param(0, (0, tenant_decorator_1.TenantId)()),
     __param(1, (0, common_1.Param)('orderId', new common_1.ParseUUIDPipe())),
     __param(2, (0, common_1.Body)()),
     __param(3, (0, current_user_decorator_1.CurrentUser)()),
@@ -80,7 +87,7 @@ __decorate([
     (0, common_1.Get)('tenants/:tenantId/orders/:orderId/payments'),
     (0, roles_decorator_1.Roles)(client_1.SystemRole.SUPERADMIN, client_1.TenantRole.ADMIN, client_1.TenantRole.MODERATOR, client_1.TenantRole.USER),
     (0, swagger_1.ApiOperation)({ summary: 'Lista pagamentos de uma ordem' }),
-    __param(0, (0, tenant_id_decorator_1.TenantId)()),
+    __param(0, (0, tenant_decorator_1.TenantId)()),
     __param(1, (0, common_1.Param)('orderId', new common_1.ParseUUIDPipe())),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String, String]),
@@ -90,7 +97,7 @@ __decorate([
     (0, common_1.Get)('tenants/:tenantId/payments'),
     (0, roles_decorator_1.Roles)(client_1.SystemRole.SUPERADMIN, client_1.TenantRole.ADMIN, client_1.TenantRole.MODERATOR),
     (0, swagger_1.ApiOperation)({ summary: 'Lista pagamentos do tenant (filtros + paginação)' }),
-    __param(0, (0, tenant_id_decorator_1.TenantId)()),
+    __param(0, (0, tenant_decorator_1.TenantId)()),
     __param(1, (0, common_1.Query)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String, query_payments_dto_1.QueryPaymentsDto]),
@@ -106,7 +113,7 @@ __decorate([
     (0, swagger_1.ApiHeader)({ name: 'Idempotency-Scope', required: true, description: 'Valor fixo: payments:refund' }),
     (0, swagger_1.ApiHeader)({ name: 'X-Approval-Token', required: true, description: 'JWT válido com role MODERATOR/ADMIN/SUPERADMIN' }),
     (0, swagger_1.ApiParam)({ name: 'paymentId', example: 'b9a7a6d9-2a6d-4d8a-8a71-9e8f3fddf6d0' }),
-    __param(0, (0, tenant_id_decorator_1.TenantId)()),
+    __param(0, (0, tenant_decorator_1.TenantId)()),
     __param(1, (0, common_1.Param)('paymentId', new common_1.ParseUUIDPipe())),
     __param(2, (0, common_1.Body)()),
     __param(3, (0, common_1.Req)()),
@@ -124,7 +131,7 @@ __decorate([
     (0, swagger_1.ApiHeader)({ name: 'Idempotency-Scope', required: true, description: 'Valor fixo: payments:cancel' }),
     (0, swagger_1.ApiHeader)({ name: 'X-Approval-Token', required: true }),
     (0, swagger_1.ApiParam)({ name: 'paymentId', example: 'b9a7a6d9-2a6d-4d8a-8a71-9e8f3fddf6d0' }),
-    __param(0, (0, tenant_id_decorator_1.TenantId)()),
+    __param(0, (0, tenant_decorator_1.TenantId)()),
     __param(1, (0, common_1.Param)('paymentId', new common_1.ParseUUIDPipe())),
     __param(2, (0, common_1.Body)()),
     __param(3, (0, common_1.Req)()),

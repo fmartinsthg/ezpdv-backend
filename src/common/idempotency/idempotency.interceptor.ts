@@ -7,8 +7,8 @@ import {
   NestInterceptor,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
-import { Observable, of, throwError } from 'rxjs';
-import { catchError, switchMap, tap } from 'rxjs/operators';
+import { Observable } from 'rxjs';
+import { catchError, tap } from 'rxjs/operators';
 import { IdempotencyService } from './idempotency.service';
 import { IDEMPOTENCY_SCOPE_META } from './idempotency.decorator';
 import {
@@ -25,11 +25,16 @@ export class IdempotencyInterceptor implements NestInterceptor {
   ) {}
 
   intercept(context: ExecutionContext, next: CallHandler): Observable<any> {
-    const scope = this.reflector.get<string>(IDEMPOTENCY_SCOPE_META, context.getHandler());
-    if (!scope) {
-      // Handler não idempotente → seguir normal
-      return next.handle();
-    }
+    const meta =
+      this.reflector.get<string[] | string>(
+        IDEMPOTENCY_SCOPE_META,
+        context.getHandler(),
+      ) || null;
+
+    // Handler não idempotente → segue normal
+    if (!meta) return next.handle();
+
+    const allowed = Array.isArray(meta) ? meta : [meta];
 
     const http = context.switchToHttp();
     const req = http.getRequest();
@@ -43,21 +48,28 @@ export class IdempotencyInterceptor implements NestInterceptor {
       throw new BadRequestException('tenantId ausente no contexto.');
     }
 
-    // Validação básica
-    this.service.validateHeadersOrThrow(scope, scopeHeader, keyHeader);
+    // Valida cabeçalhos + sinônimos; checa presença de key
+    this.service.validateHeadersOrThrow(allowed, scopeHeader, keyHeader);
     if (!isUuidV4(keyHeader)) {
       throw new BadRequestException('Idempotency-Key deve ser UUID v4.');
     }
 
-    // Hash determinístico do payload (somente body para endpoints de escrita)
+    // Hash determinístico do BODY
     const bodyString = canonicalJsonStringify(req.body ?? {});
     const requestHash = sha256Hex(bodyString);
 
-    // Começar ou fazer replay
+    // Canoniza o escopo para persistir e fazer replay
+    const effectiveScope = this.service.canonicalScope(scopeHeader);
+
     return new Observable((subscriber) => {
       (async () => {
         try {
-          const begin = await this.service.beginOrReplay(tenantId, scope, keyHeader, requestHash);
+          const begin = await this.service.beginOrReplay(
+            tenantId,
+            effectiveScope,
+            keyHeader,
+            requestHash,
+          );
 
           // Sempre ecoar os headers idempotentes
           res.setHeader('Idempotency-Key', keyHeader);
@@ -65,7 +77,6 @@ export class IdempotencyInterceptor implements NestInterceptor {
 
           if (begin.action === 'REPLAY') {
             res.setHeader(IDEMPOTENCY_HEADERS.REPLAYED, 'true');
-            // Ajustar status para o mesmo da primeira execução
             res.status(begin.responseCode || HttpStatus.OK);
             subscriber.next(begin.responseBody ?? {});
             subscriber.complete();
@@ -73,7 +84,10 @@ export class IdempotencyInterceptor implements NestInterceptor {
           }
 
           if (begin.action === 'IN_PROGRESS') {
-            res.setHeader('Retry-After', String(IDEMPOTENCY_DEFAULTS.RETRY_AFTER_SECONDS));
+            res.setHeader(
+              'Retry-After',
+              String(IDEMPOTENCY_DEFAULTS.RETRY_AFTER_SECONDS),
+            );
             res.status(HttpStatus.TOO_MANY_REQUESTS);
             subscriber.error(new Error('IDEMPOTENCY_IN_PROGRESS'));
             return;
@@ -86,8 +100,8 @@ export class IdempotencyInterceptor implements NestInterceptor {
             .handle()
             .pipe(
               tap(async (data) => {
-                // Capturar e persistir snapshot (até 32 KB)
-                const resource = this.extractResource(scope, data);
+                // Persistir snapshot (32 KB) e hints de recurso (orderId etc.)
+                const resource = this.extractResource(effectiveScope, data);
                 await this.service.succeed(
                   begin.recordId,
                   res.statusCode || HttpStatus.OK,
@@ -96,15 +110,21 @@ export class IdempotencyInterceptor implements NestInterceptor {
                 );
               }),
               catchError((err) => {
-                // Mapear erro para código/string
                 const code =
                   (err?.response && (err.response.code || err.response?.message)) ||
                   err?.message ||
                   'UNEXPECTED_ERROR';
-                const msg = (err?.response && (err.response.message || err.response)) || err?.message;
-
-                this.service.fail(begin.recordId, String(code).slice(0, 60), String(msg || '').slice(0, 500)).catch(() => {});
-                return throwError(() => err);
+                const msg =
+                  (err?.response && (err.response.message || err.response)) ||
+                  err?.message;
+                this.service
+                  .fail(
+                    begin.recordId,
+                    String(code).slice(0, 60),
+                    String(msg || '').slice(0, 500),
+                  )
+                  .catch(() => {});
+                throw err;
               }),
             )
             .subscribe({
@@ -123,7 +143,6 @@ export class IdempotencyInterceptor implements NestInterceptor {
     scope: string,
     body: any,
   ): { resourceType?: string; resourceId?: string } {
-    // Heurística simples para Orders
     if (scope.startsWith('orders:') && body && typeof body === 'object') {
       const id = body.id ?? body.orderId ?? (Array.isArray(body.items) ? body.id : undefined);
       if (typeof id === 'string') {

@@ -23,8 +23,13 @@ let PaymentsService = class PaymentsService {
         this.prisma = prisma;
         this.gateway = gateway;
     }
+    /** Quantiza valor monetário para 2 casas decimais (consistência). */
+    q2(v) {
+        return new library_1.Decimal(v).toDecimalPlaces(2);
+    }
+    /** Converte para centavos (minor units) para gateways. */
     toMinorUnits(amount) {
-        const v = new library_1.Decimal(amount);
+        const v = this.q2(amount);
         return Number(v.mul(100).toFixed(0));
     }
     async listByOrder(tenantId, orderId) {
@@ -39,12 +44,14 @@ let PaymentsService = class PaymentsService {
             tenantId,
             ...(method ? { method } : {}),
             ...(status ? { status } : {}),
-            ...(dateFrom || dateTo ? {
-                createdAt: {
-                    ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
-                    ...(dateTo ? { lt: new Date(dateTo) } : {}),
-                },
-            } : {}),
+            ...(dateFrom || dateTo
+                ? {
+                    createdAt: {
+                        ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
+                        ...(dateTo ? { lt: new Date(dateTo) } : {}),
+                    },
+                }
+                : {}),
         };
         const [items, total] = await this.prisma.$transaction([
             this.prisma.payment.findMany({
@@ -59,32 +66,55 @@ let PaymentsService = class PaymentsService {
     }
     async capture(tenantId, dto, currentUserId) {
         const orderId = dto.orderId;
-        const amount = new library_1.Decimal(dto.amount);
+        const amount = this.q2(dto.amount);
         if (amount.lte(0))
             throw new common_1.BadRequestException('Amount must be > 0');
+        if (!currentUserId)
+            throw new common_1.BadRequestException('Missing actor user id');
         return this.prisma.$transaction(async (tx) => {
-            const order = await tx.$queryRaw `
-        SELECT "id","status","total" FROM "Order" WHERE "id" = ${orderId} AND "tenantId" = ${tenantId} FOR UPDATE
-      `.then((r) => r[0]);
+            // Lock da order
+            const order = await tx
+                .$queryRaw `
+            SELECT "id","status","total"
+            FROM "Order"
+            WHERE "id" = ${orderId} AND "tenantId" = ${tenantId}
+            FOR UPDATE
+          `.then((r) => r[0]);
             if (!order)
                 throw new common_1.NotFoundException('Order not found for this tenant');
             if (order.status !== 'CLOSED')
                 throw new common_1.ConflictException('Only CLOSED orders accept payments');
+            // Sumários (capturado líquido = capturado - reembolsado)
             const capturedAgg = await tx.payment.aggregate({
-                where: { tenantId, orderId, status: 'CAPTURED' },
+                where: { tenantId, orderId, status: client_1.PaymentStatus.CAPTURED },
                 _sum: { amount: true },
             });
             const refundedAgg = await tx.paymentTransaction.aggregate({
-                where: { tenantId, type: 'REFUND', payment: { orderId } },
+                where: {
+                    tenantId,
+                    type: client_1.PaymentTransactionType.REFUND,
+                    payment: { orderId },
+                },
                 _sum: { amount: true },
             });
-            const alreadyCaptured = new library_1.Decimal(capturedAgg._sum.amount ?? 0);
-            const alreadyRefunded = new library_1.Decimal(refundedAgg._sum.amount ?? 0);
+            const alreadyCaptured = this.q2(capturedAgg._sum.amount ?? 0);
+            const alreadyRefunded = this.q2(refundedAgg._sum.amount ?? 0);
             const netCaptured = alreadyCaptured.minus(alreadyRefunded);
-            const orderTotal = new library_1.Decimal(order.total);
+            const orderTotal = this.q2(order.total);
             if (netCaptured.add(amount).gt(orderTotal)) {
-                throw new common_1.ConflictException('Captured sum would exceed order.total');
+                throw new common_1.ConflictException({
+                    code: 'PAYMENT_AMOUNT_EXCEEDS_DUE',
+                    message: 'Captured sum would exceed order.total',
+                    details: {
+                        orderId: order.id,
+                        orderTotal: orderTotal.toString(),
+                        capturedSum: netCaptured.toString(),
+                        remainingDue: orderTotal.minus(netCaptured).toString(),
+                        requested: amount.toString(),
+                    },
+                });
             }
+            // Gateway (stub/mock)
             const gw = await this.gateway.capture({
                 provider: dto.provider ?? 'NULL',
                 amountMinor: this.toMinorUnits(amount),
@@ -94,19 +124,51 @@ let PaymentsService = class PaymentsService {
             });
             if (!gw.ok)
                 throw new common_1.ConflictException('Gateway capture failed');
-            const payment = await tx.payment.create({
-                data: {
-                    tenantId,
-                    orderId,
-                    method: dto.method,
-                    amount,
-                    status: client_1.PaymentStatus.CAPTURED,
-                    provider: gw.provider,
-                    providerTxnId: gw.providerTxnId,
-                    metadata: dto.metadata,
-                    createdByUserId: currentUserId,
-                },
+            // Tenta associar a um intent OPEN (se existir)
+            const openIntent = await tx.paymentIntent.findFirst({
+                where: { tenantId, orderId, status: client_1.PaymentIntentStatus.OPEN },
+                orderBy: { createdAt: 'desc' },
             });
+            // 100% relacional; trava duplicidade por (tenantId, provider, providerTxnId)
+            const data = {
+                method: dto.method,
+                amount,
+                status: client_1.PaymentStatus.CAPTURED,
+                provider: gw.provider,
+                providerTxnId: gw.providerTxnId ?? dto.providerTxnId ?? null,
+                metadata: (dto.metadata ?? client_1.Prisma.DbNull),
+                tenant: { connect: { id: tenantId } },
+                order: { connect: { id: orderId } },
+                createdBy: { connect: { id: currentUserId } },
+                ...(openIntent ? { intent: { connect: { id: openIntent.id } } } : {}),
+            };
+            let payment;
+            try {
+                payment = await tx.payment.create({ data });
+            }
+            catch (e) {
+                // De-dupe: violação de unique (tenantId, provider, providerTxnId)
+                if (e?.code === 'P2002' &&
+                    (data.provider ?? dto.provider) &&
+                    (data.providerTxnId ?? dto.providerTxnId)) {
+                    const existing = await tx.payment.findFirst({
+                        where: {
+                            tenantId,
+                            provider: data.provider,
+                            providerTxnId: data.providerTxnId,
+                        },
+                    });
+                    if (existing) {
+                        payment = existing;
+                    }
+                    else {
+                        throw e;
+                    }
+                }
+                else {
+                    throw e;
+                }
+            }
             await tx.paymentTransaction.create({
                 data: {
                     tenantId,
@@ -117,28 +179,55 @@ let PaymentsService = class PaymentsService {
                     reason: 'capture',
                 },
             });
-            return payment;
+            // Se havia intent OPEN e quitou, marcar COMPLETED
+            if (openIntent) {
+                const newCaptured = netCaptured.add(amount);
+                if (newCaptured.gte(orderTotal)) {
+                    await tx.paymentIntent.update({
+                        where: { id: openIntent.id },
+                        data: { status: client_1.PaymentIntentStatus.COMPLETED },
+                    });
+                }
+            }
+            return {
+                ...payment,
+                summary: {
+                    orderTotal: orderTotal.toString(),
+                    capturedSum: netCaptured.add(amount).toString(),
+                    remainingDue: orderTotal.minus(netCaptured.add(amount)).toString(),
+                },
+            };
         }, { timeout: 20000 });
     }
     async refund(tenantId, paymentId, dto, approvalUserId) {
-        const amount = new library_1.Decimal(dto.amount);
+        const amount = this.q2(dto.amount);
         if (amount.lte(0))
             throw new common_1.BadRequestException('Amount must be > 0');
+        if (!approvalUserId)
+            throw new common_1.BadRequestException('Missing approval user id');
         return this.prisma.$transaction(async (tx) => {
-            const payment = await tx.payment.findFirst({ where: { id: paymentId, tenantId } });
+            const payment = await tx.payment.findFirst({
+                where: { id: paymentId, tenantId },
+            });
             if (!payment)
                 throw new common_1.NotFoundException('Payment not found');
             if (payment.status !== client_1.PaymentStatus.CAPTURED)
                 throw new common_1.ConflictException('Only CAPTURED payments can be refunded');
-            await tx.$queryRaw `SELECT "id" FROM "Order" WHERE "id" = ${payment.orderId} AND "tenantId" = ${tenantId} FOR UPDATE`;
+            // Lock da ordem do pagamento
+            await tx.$queryRaw `
+        SELECT "id" FROM "Order"
+        WHERE "id" = ${payment.orderId} AND "tenantId" = ${tenantId}
+        FOR UPDATE
+      `;
             const refundedAgg = await tx.paymentTransaction.aggregate({
-                where: { tenantId, paymentId, type: 'REFUND' },
+                where: { tenantId, paymentId, type: client_1.PaymentTransactionType.REFUND },
                 _sum: { amount: true },
             });
-            const alreadyRefunded = new library_1.Decimal(refundedAgg._sum.amount ?? 0);
-            const remaining = new library_1.Decimal(payment.amount).minus(alreadyRefunded);
-            if (amount.gt(remaining))
+            const alreadyRefunded = this.q2(refundedAgg._sum.amount ?? 0);
+            const remaining = this.q2(payment.amount).minus(alreadyRefunded);
+            if (amount.gt(remaining)) {
                 throw new common_1.ConflictException('Refund amount exceeds remaining captured amount for this payment');
+            }
             const gw = await this.gateway.refund({
                 provider: payment.provider ?? 'NULL',
                 providerTxnId: payment.providerTxnId ?? '',
@@ -160,14 +249,21 @@ let PaymentsService = class PaymentsService {
             });
             const newRemaining = remaining.minus(amount);
             if (newRemaining.lte(0)) {
-                await tx.payment.update({ where: { id: payment.id }, data: { status: client_1.PaymentStatus.REFUNDED } });
+                await tx.payment.update({
+                    where: { id: payment.id },
+                    data: { status: client_1.PaymentStatus.REFUNDED },
+                });
             }
             return tx.payment.findUnique({ where: { id: payment.id } });
         });
     }
     async cancel(tenantId, paymentId, dto, approvalUserId) {
+        if (!approvalUserId)
+            throw new common_1.BadRequestException('Missing approval user id');
         return this.prisma.$transaction(async (tx) => {
-            const payment = await tx.payment.findFirst({ where: { id: paymentId, tenantId } });
+            const payment = await tx.payment.findFirst({
+                where: { id: paymentId, tenantId },
+            });
             if (!payment)
                 throw new common_1.NotFoundException('Payment not found');
             if (payment.status !== client_1.PaymentStatus.PENDING)
@@ -179,13 +275,16 @@ let PaymentsService = class PaymentsService {
             });
             if (!gw.ok)
                 throw new common_1.ConflictException('Gateway cancel failed');
-            const updated = await tx.payment.update({ where: { id: payment.id }, data: { status: client_1.PaymentStatus.CANCELED } });
+            const updated = await tx.payment.update({
+                where: { id: payment.id },
+                data: { status: client_1.PaymentStatus.CANCELED },
+            });
             await tx.paymentTransaction.create({
                 data: {
                     tenantId,
                     paymentId: payment.id,
                     type: client_1.PaymentTransactionType.CANCEL,
-                    amount: new library_1.Decimal(0),
+                    amount: this.q2(0),
                     byUserId: approvalUserId,
                     reason: dto.reason ?? 'cancel',
                 },

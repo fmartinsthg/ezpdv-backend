@@ -7,21 +7,22 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/* ------------------------- Enums Globais ------------------------- */
+/**
+ * ------------------------- Enums Globais -------------------------
+ */
 
 // Papel GLOBAL, para administração da plataforma
 enum SystemRole {
-  SUPERADMIN  // pode criar/editar tenants e gerenciar contas
-  SUPPORT     // opcional, suporte limitado
-  NONE        // padrão para usuários comuns
+  SUPERADMIN // pode criar/editar tenants e gerenciar contas
+  SUPPORT // opcional, suporte limitado
+  NONE // padrão para usuários comuns
 }
 
 enum TenantRole {
-  ADMIN       // dono/administrador do restaurante
-  MODERATOR   // gerente/financeiro
-  USER        // atendente/garçom
+  ADMIN // dono/administrador do restaurante
+  MODERATOR // gerente/financeiro
+  USER // atendente/garçom
 }
-
 
 enum OrderStatus {
   OPEN
@@ -51,15 +52,38 @@ enum PaymentMethod {
 
 enum PaymentStatus {
   PENDING
+  AUTHORIZED
   CAPTURED
   REFUNDED
   CANCELED
 }
 
 enum PaymentTransactionType {
+  AUTHORIZE
   CAPTURE
   REFUND
   CANCEL
+  VOID
+}
+
+enum PaymentIntentStatus {
+  OPEN
+  COMPLETED
+  CANCELED
+}
+
+enum PaymentAttemptStatus {
+  INIT
+  AUTHORIZED
+  CAPTURED
+  FAILED
+}
+
+enum PixChargeStatus {
+  PENDING
+  PAID
+  EXPIRED
+  CANCELED
 }
 
 enum InventoryUnit {
@@ -86,7 +110,9 @@ enum TransactionType {
   OTHER
 }
 
-/** (Opcional) roteamento de produção por estação */
+/**
+ * (Opcional) roteamento de produção por estação
+ */
 enum PrepStation {
   KITCHEN
   BAR
@@ -101,88 +127,100 @@ enum IdempotencyStatus {
   EXPIRED
 }
 
-/* ------------------------- Multi-tenant ------------------------- */
+/**
+ * ------------------------- Multi-tenant -------------------------
+ */
 
 model Tenant {
-  id               String              @id @default(uuid())
-  name             String
-  slug             String?             @unique // opcional: subdomínio/identificador estável
-  createdAt        DateTime            @default(now())
-  updatedAt        DateTime            @updatedAt
+  id        String   @id @default(uuid())
+  name      String
+  slug      String?  @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  memberships      UserTenant[]
-  categories       Category[]
-  products         Product[]
-  sales            Sale[]
-  financials       FinancialTransaction[]
+  memberships UserTenant[]
+  categories  Category[]
+  products    Product[]
+  sales       Sale[]
+  financials  FinancialTransaction[]
 
   // Orders & Estoque
-  orders           Order[]
-  orderItems       OrderItem[]
-  payments         Payment[]
-  inventoryItems   InventoryItem[]
-  recipes          Recipe[]
-  stockMovements   StockMovement[]
+  orders         Order[]
+  orderItems     OrderItem[]
+  payments       Payment[]
+  inventoryItems InventoryItem[]
+  recipes        Recipe[]
+  stockMovements StockMovement[]
+
+  // 🔽 ADIÇÕES para fechar relações
+  paymentIntents  PaymentIntent[]
+  paymentAttempts PaymentAttempt[]
+  pixCharges      PixCharge[]
 }
 
 model User {
-  id                       String                    @id @default(uuid())
-  name                     String
-  email                    String                    @unique
-  password                 String
-  active                   Boolean                   @default(true)
-  systemRole               SystemRole                @default(NONE)
-  createdAt                DateTime                  @default(now())
-  updatedAt                DateTime                  @updatedAt
+  id         String     @id @default(uuid())
+  name       String
+  email      String     @unique
+  password   String
+  active     Boolean    @default(true)
+  systemRole SystemRole @default(NONE)
+  createdAt  DateTime   @default(now())
+  updatedAt  DateTime   @updatedAt
 
-  memberships              UserTenant[]
-  financialTransactions    FinancialTransaction[]    @relation("UserFinancialTransactions")
-  sales                    Sale[]
+  memberships           UserTenant[]
+  financialTransactions FinancialTransaction[] @relation("UserFinancialTransactions")
+  sales                 Sale[]
 
   // Relações com pedidos
-  cashierOrders            Order[]                   @relation("OrderCashierUser")
-  createdOrders            Order[]                   @relation("OrderCreatedByUser")   // NEW
-  assignedOrders           Order[]                   @relation("OrderAssignedToUser")  // NEW
+  cashierOrders  Order[] @relation("OrderCashierUser")
+  createdOrders  Order[] @relation("OrderCreatedByUser")
+  assignedOrders Order[] @relation("OrderAssignedToUser")
 
   // Atores de VOID
-  voidRequestedItems       OrderItem[]               @relation("VoidRequestedBy")      // NEW
-  voidApprovedItems        OrderItem[]               @relation("VoidApprovedBy")       // NEW
+  voidRequestedItems OrderItem[] @relation("VoidRequestedBy")
+  voidApprovedItems  OrderItem[] @relation("VoidApprovedBy")
 
-  // Payments (inversos)
-  createdPayments        Payment[]            @relation("UserCreatedPayments")
-  paymentTransactions    PaymentTransaction[] @relation("UserPaymentTransactions")
+  // Payments
+  createdPayments     Payment[]            @relation("UserCreatedPayments")
+  paymentTransactions PaymentTransaction[] @relation("UserPaymentTransactions")
+
+  // 🔽 ADIÇÃO: intents criados por este usuário
+  createdPaymentIntents PaymentIntent[] @relation("UserCreatedPaymentIntents")
 }
 
 model UserTenant {
   // vínculo usuário↔tenant com papel no tenant
-  userId      String
-  tenantId    String
-  role        TenantRole @default(USER)
+  userId   String
+  tenantId String
+  role     TenantRole @default(USER)
 
-  user        User   @relation(fields: [userId], references: [id])
-  tenant      Tenant @relation(fields: [tenantId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
 
   @@id([userId, tenantId]) // evita duplicidade de membership
   @@index([tenantId, role])
 }
 
-/* ------------------------- Domínio (por tenant) ------------------------- */
+/**
+ * ------------------------- Domínio (por tenant) -------------------------
+ */
 
 model Category {
-  id          String     @id @default(uuid())
+  id          String   @id @default(uuid())
   tenantId    String
   name        String
   description String?
-  isActive    Boolean    @default(true)
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
-  parentId    String?
-  parent      Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
-  children    Category[] @relation("CategoryHierarchy")
+  parentId String?
+  parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id])
+  children Category[] @relation("CategoryHierarchy")
 
-  tenant      Tenant     @relation(fields: [tenantId], references: [id])
-  products    Product[]
+  tenant   Tenant    @relation(fields: [tenantId], references: [id])
+  products Product[]
 
   @@unique([tenantId, name])
   @@index([tenantId, name])
@@ -190,26 +228,26 @@ model Category {
 }
 
 model Product {
-  id          String    @id @default(uuid())
+  id          String  @id @default(uuid())
   tenantId    String
   name        String
   description String?
-  price       Decimal   @db.Decimal(10, 2)
-  cost        Decimal   @db.Decimal(10, 2)
+  price       Decimal @db.Decimal(10, 2)
+  cost        Decimal @db.Decimal(10, 2)
   barcode     String?
-  stock       Int       @default(0)  // NOTA: Orders não altera este campo; usa InventoryItem
-  isActive    Boolean   @default(true)
+  stock       Int     @default(0) // NOTA: Orders não altera este campo; usa InventoryItem
+  isActive    Boolean @default(true)
 
-  categoryId  String?
-  category    Category? @relation(fields: [categoryId], references: [id])
+  categoryId String?
+  category   Category? @relation(fields: [categoryId], references: [id])
 
-  createdAt   DateTime  @default(now())
-  updatedAt   DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  tenant      Tenant    @relation(fields: [tenantId], references: [id])
-  saleItems   SaleItem[]
-  orderItems  OrderItem[]
-  recipe      Recipe?
+  tenant     Tenant      @relation(fields: [tenantId], references: [id])
+  saleItems  SaleItem[]
+  orderItems OrderItem[]
+  recipe     Recipe?
 
   @@unique([tenantId, name])
   @@unique([tenantId, barcode])
@@ -219,227 +257,325 @@ model Product {
 }
 
 model Sale {
-  id         String    @id @default(uuid())
-  tenantId   String
-  total      Decimal   @db.Decimal(10, 2)
-  payment    PaymentMethod
-  discount   Decimal?  @db.Decimal(10, 2)
-  tax        Decimal?  @db.Decimal(10, 2)
-  createdAt  DateTime  @default(now())
+  id        String        @id @default(uuid())
+  tenantId  String
+  total     Decimal       @db.Decimal(10, 2)
+  payment   PaymentMethod
+  discount  Decimal?      @db.Decimal(10, 2)
+  tax       Decimal?      @db.Decimal(10, 2)
+  createdAt DateTime      @default(now())
 
-  userId     String
-  user       User      @relation(fields: [userId], references: [id])
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
 
-  tenant     Tenant    @relation(fields: [tenantId], references: [id])
-  items      SaleItem[]
+  tenant Tenant     @relation(fields: [tenantId], references: [id])
+  items  SaleItem[]
 }
 
 model SaleItem {
-  id         String   @id @default(uuid())
-  saleId     String
-  productId  String
-  quantity   Int
-  price      Decimal  @db.Decimal(10, 2)
+  id        String  @id @default(uuid())
+  saleId    String
+  productId String
+  quantity  Int
+  price     Decimal @db.Decimal(10, 2)
 
-  sale       Sale     @relation(fields: [saleId], references: [id])
-  product    Product  @relation(fields: [productId], references: [id])
+  sale    Sale    @relation(fields: [saleId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
 }
 
 model FinancialTransaction {
-  id            String        @id @default(uuid())
-  tenantId      String
-  type          TransactionType
-  amount        Decimal       @db.Decimal(10, 2)
-  description   String?
-  createdAt     DateTime      @default(now())
+  id          String          @id @default(uuid())
+  tenantId    String
+  type        TransactionType
+  amount      Decimal         @db.Decimal(10, 2)
+  description String?
+  createdAt   DateTime        @default(now())
 
-  createdById   String
-  createdBy     User          @relation("UserFinancialTransactions", fields: [createdById], references: [id])
+  createdById String
+  createdBy   User   @relation("UserFinancialTransactions", fields: [createdById], references: [id])
 
-  tenant        Tenant        @relation(fields: [tenantId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
 
   @@index([tenantId, type, createdAt])
 }
 
-/* ------------------------- Idempotência ------------------------- */
+/**
+ * ------------------------- Idempotência -------------------------
+ */
 
 model IdempotencyKey {
-  id                String              @id @default(uuid())
+  id                String            @id @default(uuid())
   tenantId          String
-  scope             String              // ex.: "orders:create"
-  key               String              // UUID v4 gerado pelo cliente
-  status            IdempotencyStatus   @default(PROCESSING)
+  scope             String // ex.: "orders:create"
+  key               String // UUID v4 gerado pelo cliente
+  status            IdempotencyStatus @default(PROCESSING)
   requestHash       String
   responseCode      Int?
   responseBody      Json?
-  responseTruncated Boolean             @default(false)
-  resourceType      String?             // ex.: "order"
-  resourceId        String?             // id do recurso principal
+  responseTruncated Boolean           @default(false)
+  resourceType      String? // ex.: "order"
+  resourceId        String? // id do recurso principal
   errorCode         String?
   errorMessage      String?
-  createdAt         DateTime            @default(now())
-  updatedAt         DateTime            @updatedAt
-  expiresAt         DateTime            // TTL = now + 48h
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  expiresAt         DateTime // TTL = now + 48h
 
   @@unique([tenantId, scope, key])
   @@index([tenantId, scope, key])
 }
 
-/* ------------------------- Orders e Pagamentos ------------------------- */
+/**
+ * ------------------------- Orders e Pagamentos -------------------------
+ */
 
 model Order {
-  id               String       @id @default(uuid())
-  tenantId         String
-  status           OrderStatus  @default(OPEN)
+  id       String      @id @default(uuid())
+  tenantId String
+  status   OrderStatus @default(OPEN)
 
-  subtotal         Decimal      @db.Decimal(10, 2)
-  discount         Decimal?     @db.Decimal(10, 2)
-  total            Decimal      @db.Decimal(10, 2)
+  subtotal Decimal  @db.Decimal(10, 2)
+  discount Decimal? @db.Decimal(10, 2)
+  total    Decimal  @db.Decimal(10, 2)
 
-  tabNumber        String?      // NEW: opcional identificação da comanda/mesa
-  idempotencyKey   String?
-  version          Int          @default(0) // NEW: optimistic locking
+  tabNumber      String?
+  idempotencyKey String?
+  version        Int     @default(0)
 
   // Atores
-  createdByUserId  String       // NEW: quem abriu a comanda
-  assignedToUserId String?      // NEW: garçom responsável atual
-  cashierUserId    String?      // (ANTES era obrigatório) agora opcional
+  createdByUserId  String
+  assignedToUserId String?
+  cashierUserId    String?
 
-  createdAt        DateTime     @default(now())
-  updatedAt        DateTime     @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  tenant           Tenant       @relation(fields: [tenantId], references: [id])
-  createdByUser    User         @relation("OrderCreatedByUser", fields: [createdByUserId], references: [id])   // NEW
-  assignedToUser   User?        @relation("OrderAssignedToUser", fields: [assignedToUserId], references: [id]) // NEW
-  cashierUser      User?        @relation("OrderCashierUser", fields: [cashierUserId], references: [id])
+  // ✅ NOVO: estado financeiro
+  isSettled Boolean   @default(false)
+  paidAt    DateTime?
 
-  items            OrderItem[]
-  payments         Payment[]
-  stockMovements   StockMovement[]
+  tenant         Tenant @relation(fields: [tenantId], references: [id])
+  createdByUser  User   @relation("OrderCreatedByUser", fields: [createdByUserId], references: [id])
+  assignedToUser User?  @relation("OrderAssignedToUser", fields: [assignedToUserId], references: [id])
+  cashierUser    User?  @relation("OrderCashierUser", fields: [cashierUserId], references: [id])
 
-  @@index([tenantId, status, createdAt])
+  items          OrderItem[]
+  payments       Payment[]
+  stockMovements StockMovement[]
+
+  // intents associados a esta ordem
+  paymentIntents PaymentIntent[]
+
   @@unique([tenantId, idempotencyKey])
+  @@index([tenantId, status, createdAt])
+  @@index([tenantId, isSettled, createdAt]) // ✅ NOVO
 }
 
+
 model OrderItem {
-  id              String            @id @default(uuid())
-  orderId         String
-  tenantId        String
-  productId       String
+  id        String @id @default(uuid())
+  orderId   String
+  tenantId  String
+  productId String
 
-  status          OrderItemStatus   @default(STAGED) // NEW
-  station         PrepStation?                      // NEW (derivado de produto/categoria)
+  status  OrderItemStatus @default(STAGED)
+  station PrepStation?
 
-  quantity        Decimal           @db.Decimal(10, 3)
-  unitPrice       Decimal           @db.Decimal(10, 2)
-  total           Decimal           @db.Decimal(10, 2)
+  quantity  Decimal @db.Decimal(10, 3)
+  unitPrice Decimal @db.Decimal(10, 2)
+  total     Decimal @db.Decimal(10, 2)
 
-  notes           String?                           // NEW
-  firedAt         DateTime?                         // NEW
-  voidedAt        DateTime?                         // NEW
-  voidReason      String?                           // NEW
-  voidByUserId    String?                           // NEW
-  voidApprovedBy  String?                           // NEW
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt      // NEW
+  notes          String?
+  firedAt        DateTime?
+  voidedAt       DateTime?
+  voidReason     String?
+  voidByUserId   String?
+  voidApprovedBy String?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
-  order           Order             @relation(fields: [orderId], references: [id])
-  product         Product           @relation(fields: [productId], references: [id])
-  tenant          Tenant            @relation(fields: [tenantId], references: [id])
+  order   Order   @relation(fields: [orderId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
 
   // Relações de auditoria de VOID
-  voidByUser      User?             @relation("VoidRequestedBy", fields: [voidByUserId], references: [id])     // NEW
-  voidApprovedByUser User?          @relation("VoidApprovedBy", fields: [voidApprovedBy], references: [id])    // NEW
+  voidByUser         User? @relation("VoidRequestedBy", fields: [voidByUserId], references: [id])
+  voidApprovedByUser User? @relation("VoidApprovedBy", fields: [voidApprovedBy], references: [id])
 
   @@index([tenantId, orderId])
 }
 
 model Payment {
-  id              String         @id @default(uuid())
-  orderId         String
-  tenantId        String
+  id       String @id @default(uuid())
+  orderId  String
+  tenantId String
 
-  method          PaymentMethod
-  amount          Decimal        @db.Decimal(10, 2)
-  status          PaymentStatus  // PENDING|CAPTURED|REFUNDED|CANCELED
+  // vínculo opcional a um intent aberto
+  paymentIntentId String?
 
-  provider        String?
-  providerTxnId   String?
-  metadata        Json?
+  method PaymentMethod
+  amount Decimal       @db.Decimal(10, 2)
+  status PaymentStatus // PENDING | AUTHORIZED | CAPTURED | REFUNDED | CANCELED
+
+  provider      String?
+  providerTxnId String?
+  metadata      Json?
 
   createdByUserId String
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   // Relações
-  order           Order          @relation(fields: [orderId], references: [id])
-  tenant          Tenant         @relation(fields: [tenantId], references: [id])
-  createdBy       User           @relation("UserCreatedPayments", fields: [createdByUserId], references: [id])
+  order     Order  @relation(fields: [orderId], references: [id])
+  tenant    Tenant @relation(fields: [tenantId], references: [id])
+  createdBy User   @relation("UserCreatedPayments", fields: [createdByUserId], references: [id])
 
-  transactions    PaymentTransaction[]
+  // relação com Intent
+  intent PaymentIntent? @relation(fields: [paymentIntentId], references: [id])
 
+  // 🔽 ADIÇÃO: tentativas (ex.: autorizações, callbacks do PSP)
+  attempts PaymentAttempt[] @relation("Payment_Attempts")
+
+  transactions PaymentTransaction[]
+
+  // De-dupe robusto por evento do PSP
+  @@unique([tenantId, provider, providerTxnId])
   // Índices
-  @@index([tenantId, orderId])
+  @@index([tenantId, orderId, createdAt])
   @@index([tenantId, status])
-  @@index([tenantId, createdAt])
-  @@unique([tenantId, providerTxnId])
+}
+
+model PaymentIntent {
+  id              String              @id @default(uuid())
+  tenantId        String
+  orderId         String
+  currency        String              @default("BRL")
+  amountDue       Decimal             @db.Decimal(10, 2)
+  status          PaymentIntentStatus @default(OPEN)
+  expiresAt       DateTime?
+  createdByUserId String
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  tenant    Tenant @relation(fields: [tenantId], references: [id])
+  order     Order  @relation(fields: [orderId], references: [id])
+  createdBy User   @relation("UserCreatedPaymentIntents", fields: [createdByUserId], references: [id])
+
+  payments Payment[]
+
+  // 🔽 ADIÇÃO: cobranças PIX geradas para este intent
+  pixCharges PixCharge[] @relation("Intent_PixCharges")
+
+  @@index([tenantId, orderId, status])
+}
+
+model PaymentAttempt {
+  id            String               @id @default(uuid())
+  tenantId      String
+  paymentId     String
+  provider      String
+  providerTxnId String
+  status        PaymentAttemptStatus @default(INIT)
+  errorCode     String?
+  errorMessage  String?
+  raw           Json?
+  createdAt     DateTime             @default(now())
+
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
+  payment Payment @relation("Payment_Attempts", fields: [paymentId], references: [id])
+
+  @@unique([tenantId, provider, providerTxnId])
+  @@index([tenantId, paymentId, status])
+  @@map("payment_attempts")
+}
+
+model WebhookEvent {
+  id          String    @id @default(uuid())
+  provider    String
+  eventId     String    @unique
+  payload     Json
+  receivedAt  DateTime  @default(now())
+  processedAt DateTime?
+
+  @@map("webhook_events")
+}
+
+model PixCharge {
+  id              String          @id @default(uuid())
+  tenantId        String
+  paymentIntentId String
+  qrData          String
+  emv             String?
+  expiresAt       DateTime
+  status          PixChargeStatus @default(PENDING)
+  provider        String?
+  providerTxnId   String?
+  createdAt       DateTime        @default(now())
+
+  tenant Tenant        @relation(fields: [tenantId], references: [id])
+  intent PaymentIntent @relation("Intent_PixCharges", fields: [paymentIntentId], references: [id])
+
+  @@index([tenantId, paymentIntentId, status])
+  @@map("pix_charges")
 }
 
 model PaymentTransaction {
-  id         String                   @id @default(uuid())
-  tenantId   String
-  paymentId  String
-  type       PaymentTransactionType
-  amount     Decimal                  @db.Decimal(10, 2)
-  reason     String?
-  byUserId   String
-  createdAt  DateTime                 @default(now())
+  id        String                 @id @default(uuid())
+  tenantId  String
+  paymentId String
+  type      PaymentTransactionType
+  amount    Decimal                @db.Decimal(10, 2)
+  reason    String?
+  byUserId  String
+  createdAt DateTime               @default(now())
 
   // Relações
-  payment    Payment                  @relation(fields: [paymentId], references: [id])
-  byUser     User                     @relation("UserPaymentTransactions", fields: [byUserId], references: [id])
+  payment Payment @relation(fields: [paymentId], references: [id])
+  byUser  User    @relation("UserPaymentTransactions", fields: [byUserId], references: [id])
 
   // Índices
   @@index([tenantId, createdAt])
   @@index([tenantId, type])
 }
 
-/* ------------------------- Estoque, Receita e Movimentação ------------------------- */
+/**
+ * ------------------------- Estoque, Receita e Movimentação -------------------------
+ */
 
 model InventoryItem {
-  id            String         @id @default(uuid())
-  tenantId      String
-  name          String
-  unit          InventoryUnit
-  factorToBase  Decimal        @db.Decimal(10, 3)
-  onHand        Decimal        @db.Decimal(10, 3)
-  isIngredient  Boolean        @default(false)
+  id           String        @id @default(uuid())
+  tenantId     String
+  name         String
+  unit         InventoryUnit
+  factorToBase Decimal       @db.Decimal(10, 3)
+  onHand       Decimal       @db.Decimal(10, 3)
+  isIngredient Boolean       @default(false)
 
-  tenant        Tenant         @relation(fields: [tenantId], references: [id])
-  recipeLines   RecipeLine[]
+  tenant         Tenant          @relation(fields: [tenantId], references: [id])
+  recipeLines    RecipeLine[]
   stockMovements StockMovement[]
 
   @@unique([tenantId, name])
 }
 
 model Recipe {
-  id        String    @id @default(uuid())
-  productId String    @unique
+  id        String @id @default(uuid())
+  productId String @unique
   tenantId  String
 
-  product   Product   @relation(fields: [productId], references: [id])
-  tenant    Tenant    @relation(fields: [tenantId], references: [id])
-  lines     RecipeLine[]
+  product Product      @relation(fields: [productId], references: [id])
+  tenant  Tenant       @relation(fields: [tenantId], references: [id])
+  lines   RecipeLine[]
 }
 
 model RecipeLine {
-  id              String        @id @default(uuid())
+  id              String  @id @default(uuid())
   recipeId        String
   inventoryItemId String
-  qtyBase         Decimal       @db.Decimal(10, 3)
+  qtyBase         Decimal @db.Decimal(10, 3)
 
-  recipe          Recipe        @relation(fields: [recipeId], references: [id])
-  inventoryItem   InventoryItem @relation(fields: [inventoryItemId], references: [id])
+  recipe        Recipe        @relation(fields: [recipeId], references: [id])
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id])
 }
 
 model StockMovement {
@@ -449,12 +585,12 @@ model StockMovement {
   type            StockMovementType
   qtyDelta        Decimal           @db.Decimal(10, 3) // negativo = saída (SALE/fire); positivo = entrada (ADJUSTMENT/void)
   relatedOrderId  String?
-  reason          String?           // NEW: opcional para rastreabilidade
+  reason          String? // NEW: opcional para rastreabilidade
   createdAt       DateTime          @default(now())
 
-  tenant          Tenant            @relation(fields: [tenantId], references: [id])
-  inventoryItem   InventoryItem     @relation(fields: [inventoryItemId], references: [id])
-  order           Order?            @relation(fields: [relatedOrderId], references: [id])
+  tenant        Tenant        @relation(fields: [tenantId], references: [id])
+  inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id])
+  order         Order?        @relation(fields: [relatedOrderId], references: [id])
 
   @@index([tenantId, inventoryItemId, createdAt])
 }

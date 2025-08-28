@@ -18,6 +18,7 @@ import { CategoryModule } from "./category/category.module";
 import { PlatformModule } from "./platform/platform.module";
 import { IdempotencyModule } from "./common/idempotency/idempotency.module";
 import { PaymentsModule } from "./payments/payments.module";
+import { PaymentIntentsModule } from "./payment-intents/payment-intents.module";
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { PaymentsModule } from "./payments/payments.module";
     PlatformModule,
     IdempotencyModule,
     PaymentsModule,
+    PaymentIntentsModule,
   ],
   controllers: [AppController],
   providers: [

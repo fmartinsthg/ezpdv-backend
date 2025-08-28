@@ -12,7 +12,14 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { ApiBearerAuth, ApiHeader, ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  ApiBearerAuth,
+  ApiHeader,
+  ApiOperation,
+  ApiParam,
+  ApiResponse,
+  ApiTags,
+} from '@nestjs/swagger';
 import { PaymentsService } from './payments.service';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { RefundPaymentDto } from './dto/refund-payment.dto';
@@ -24,8 +31,9 @@ import { RolesGuard } from '../auth/roles.guard';
 import { Roles } from '../auth/roles.decorator';
 import { SystemRole, TenantRole } from '@prisma/client';
 
-import { CurrentUser } from '../common/decorators/current-user.decorator';
-import { TenantId } from '../common/decorators/tenant-id.decorator';
+import { CurrentUser } from '../auth/current-user.decorator';
+import { AuthUser } from '../auth/jwt.strategy';
+import { TenantId } from '../common/tenant/tenant.decorator';
 
 import { PaymentsApprovalGuard } from './payments.approval.guard';
 import { Idempotent } from '../common/idempotency/idempotency.decorator';
@@ -52,10 +60,15 @@ export class PaymentsController {
     @TenantId() tenantId: string,
     @Param('orderId', new ParseUUIDPipe()) orderId: string,
     @Body() dto: CreatePaymentDto,
-    @CurrentUser() user: any,
+    @CurrentUser() user: AuthUser,
   ) {
+    // Alguns tokens expõem `sub`, outros `id`; padroniza aqui
+    const actorId = (user as any)?.id ?? (user as any)?.sub;
+    if (!actorId) {
+      throw new BadRequestException('Invalid authenticated user (missing id/sub).');
+    }
     dto.orderId = orderId;
-    return this.payments.capture(tenantId, dto, user.id);
+    return this.payments.capture(tenantId, dto, actorId);
   }
 
   @Get('tenants/:tenantId/orders/:orderId/payments')
@@ -93,8 +106,10 @@ export class PaymentsController {
     @Body() dto: RefundPaymentDto,
     @Req() req: any,
   ) {
-    const approvalUserId = req?.approvalUser?.id;
-    if (!approvalUserId) throw new BadRequestException('Missing approval user context');
+    const approvalUserId = req?.approvalUser?.id ?? req?.approvalUser?.sub;
+    if (!approvalUserId) {
+      throw new BadRequestException('Missing approval user id/sub');
+    }
     return this.payments.refund(tenantId, paymentId, dto, approvalUserId);
   }
 
@@ -113,8 +128,10 @@ export class PaymentsController {
     @Body() dto: CancelPaymentDto,
     @Req() req: any,
   ) {
-    const approvalUserId = req?.approvalUser?.id;
-    if (!approvalUserId) throw new BadRequestException('Missing approval user context');
+    const approvalUserId = req?.approvalUser?.id ?? req?.approvalUser?.sub;
+    if (!approvalUserId) {
+      throw new BadRequestException('Missing approval user id/sub');
+    }
     return this.payments.cancel(tenantId, paymentId, dto, approvalUserId);
   }
 }

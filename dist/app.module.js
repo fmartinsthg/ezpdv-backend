@@ -24,6 +24,7 @@ const category_module_1 = require("./category/category.module");
 const platform_module_1 = require("./platform/platform.module");
 const idempotency_module_1 = require("./common/idempotency/idempotency.module");
 const payments_module_1 = require("./payments/payments.module");
+const payment_intents_module_1 = require("./payment-intents/payment-intents.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -42,6 +43,7 @@ exports.AppModule = AppModule = __decorate([
             platform_module_1.PlatformModule,
             idempotency_module_1.IdempotencyModule,
             payments_module_1.PaymentsModule,
+            payment_intents_module_1.PaymentIntentsModule,
         ],
         controllers: [app_controller_1.AppController],
         providers: [

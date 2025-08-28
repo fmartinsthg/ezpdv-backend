@@ -24,11 +24,11 @@ let IdempotencyInterceptor = class IdempotencyInterceptor {
         this.service = service;
     }
     intercept(context, next) {
-        const scope = this.reflector.get(idempotency_decorator_1.IDEMPOTENCY_SCOPE_META, context.getHandler());
-        if (!scope) {
-            // Handler não idempotente → seguir normal
+        const meta = this.reflector.get(idempotency_decorator_1.IDEMPOTENCY_SCOPE_META, context.getHandler()) || null;
+        // Handler não idempotente → segue normal
+        if (!meta)
             return next.handle();
-        }
+        const allowed = Array.isArray(meta) ? meta : [meta];
         const http = context.switchToHttp();
         const req = http.getRequest();
         const res = http.getResponse();
@@ -38,25 +38,25 @@ let IdempotencyInterceptor = class IdempotencyInterceptor {
         if (!tenantId) {
             throw new common_1.BadRequestException('tenantId ausente no contexto.');
         }
-        // Validação básica
-        this.service.validateHeadersOrThrow(scope, scopeHeader, keyHeader);
+        // Valida cabeçalhos + sinônimos; checa presença de key
+        this.service.validateHeadersOrThrow(allowed, scopeHeader, keyHeader);
         if (!(0, idempotency_util_1.isUuidV4)(keyHeader)) {
             throw new common_1.BadRequestException('Idempotency-Key deve ser UUID v4.');
         }
-        // Hash determinístico do payload (somente body para endpoints de escrita)
+        // Hash determinístico do BODY
         const bodyString = (0, idempotency_util_1.canonicalJsonStringify)(req.body ?? {});
         const requestHash = (0, idempotency_util_1.sha256Hex)(bodyString);
-        // Começar ou fazer replay
+        // Canoniza o escopo para persistir e fazer replay
+        const effectiveScope = this.service.canonicalScope(scopeHeader);
         return new rxjs_1.Observable((subscriber) => {
             (async () => {
                 try {
-                    const begin = await this.service.beginOrReplay(tenantId, scope, keyHeader, requestHash);
+                    const begin = await this.service.beginOrReplay(tenantId, effectiveScope, keyHeader, requestHash);
                     // Sempre ecoar os headers idempotentes
                     res.setHeader('Idempotency-Key', keyHeader);
                     res.setHeader('Idempotency-Scope', scopeHeader);
                     if (begin.action === 'REPLAY') {
                         res.setHeader(idempotency_constants_1.IDEMPOTENCY_HEADERS.REPLAYED, 'true');
-                        // Ajustar status para o mesmo da primeira execução
                         res.status(begin.responseCode || common_1.HttpStatus.OK);
                         subscriber.next(begin.responseBody ?? {});
                         subscriber.complete();
@@ -73,17 +73,19 @@ let IdempotencyInterceptor = class IdempotencyInterceptor {
                     next
                         .handle()
                         .pipe((0, operators_1.tap)(async (data) => {
-                        // Capturar e persistir snapshot (até 32 KB)
-                        const resource = this.extractResource(scope, data);
+                        // Persistir snapshot (32 KB) e hints de recurso (orderId etc.)
+                        const resource = this.extractResource(effectiveScope, data);
                         await this.service.succeed(begin.recordId, res.statusCode || common_1.HttpStatus.OK, data, resource);
                     }), (0, operators_1.catchError)((err) => {
-                        // Mapear erro para código/string
                         const code = (err?.response && (err.response.code || err.response?.message)) ||
                             err?.message ||
                             'UNEXPECTED_ERROR';
-                        const msg = (err?.response && (err.response.message || err.response)) || err?.message;
-                        this.service.fail(begin.recordId, String(code).slice(0, 60), String(msg || '').slice(0, 500)).catch(() => { });
-                        return (0, rxjs_1.throwError)(() => err);
+                        const msg = (err?.response && (err.response.message || err.response)) ||
+                            err?.message;
+                        this.service
+                            .fail(begin.recordId, String(code).slice(0, 60), String(msg || '').slice(0, 500))
+                            .catch(() => { });
+                        throw err;
                     }))
                         .subscribe({
                         next: (v) => subscriber.next(v),
@@ -98,7 +100,6 @@ let IdempotencyInterceptor = class IdempotencyInterceptor {
         });
     }
     extractResource(scope, body) {
-        // Heurística simples para Orders
         if (scope.startsWith('orders:') && body && typeof body === 'object') {
             const id = body.id ?? body.orderId ?? (Array.isArray(body.items) ? body.id : undefined);
             if (typeof id === 'string') {

@@ -4,7 +4,7 @@ exports.IDEMPOTENCY_ALLOWED_SCOPES = exports.IDEMPOTENCY_DEFAULTS = exports.IDEM
 exports.IDEMPOTENCY_HEADERS = {
     KEY: 'idempotency-key',
     SCOPE: 'idempotency-scope',
-    REPLAYED: 'Idempotency-Replayed',
+    REPLAYED: 'idempotency-replayed',
 };
 exports.IDEMPOTENCY_DEFAULTS = {
     SNAPSHOT_MAX_BYTES: 32 * 1024, // 32 KB
@@ -13,12 +13,18 @@ exports.IDEMPOTENCY_DEFAULTS = {
 };
 // Escopos suportados (ampliar conforme módulos)
 exports.IDEMPOTENCY_ALLOWED_SCOPES = new Set([
+    // Orders
     'orders:create',
-    'orders:appendItems',
+    'orders:append-items',
+    'orders:void-item',
     'orders:fire',
-    'orders:voidItem',
-    'orders:close',
     'orders:cancel',
-    // futuros:
-    // 'payments:capture', 'payments:refund', ...
+    'orders:close',
+    // Payments
+    'payments:capture',
+    'payments:refund',
+    'payments:cancel',
+    'payments:intent:create',
+    'payments:authorize',
+    'payments:pix:create',
 ]);

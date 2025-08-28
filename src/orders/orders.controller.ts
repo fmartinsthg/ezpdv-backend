@@ -87,11 +87,15 @@ export class OrdersController {
 
   @ApiOperation({ summary: 'Adicionar itens STAGED na comanda' })
   @ApiHeader({ name: 'Idempotency-Key', required: true })
-  @ApiHeader({ name: 'Idempotency-Scope', required: true, description: 'Valor fixo: orders:append-items' })
+  @ApiHeader({
+    name: 'Idempotency-Scope',
+    required: true,
+    description: 'orders:append-items (ou sinônimo: orders:items:append)',
+  })
   @ApiResponse({ status: 200 })
   @ApiParam({ name: 'tenantId', type: 'string', format: 'uuid' })
   @Roles('ADMIN', 'MODERATOR', 'USER')
-  @Idempotent('orders:append-items')
+  @Idempotent(['orders:append-items', 'orders:items:append'])
   @Post(':id/items')
   async appendItems(
     @TenantId() tenantId: string,
@@ -122,11 +126,15 @@ export class OrdersController {
   @ApiOperation({ summary: 'VOID de item FIRED (requer aprovação extra)' })
   @ApiHeader({ name: 'X-Approval-Token', required: true, description: 'JWT de MODERATOR/ADMIN/SUPERADMIN (pode usar "Bearer ...")' })
   @ApiHeader({ name: 'Idempotency-Key', required: true })
-  @ApiHeader({ name: 'Idempotency-Scope', required: true, description: 'Valor fixo: orders:void-item' })
+  @ApiHeader({
+    name: 'Idempotency-Scope',
+    required: true,
+    description: 'orders:void-item (ou sinônimo: orders:items:void)',
+  })
   @ApiResponse({ status: 200, description: 'Item anulado e estoque recreditado' })
   @ApiParam({ name: 'tenantId', type: 'string', format: 'uuid' })
-  @Roles('ADMIN', 'MODERATOR', 'USER') // USER pode solicitar, mas precisa approval token
-  @Idempotent('orders:void-item')
+  @Roles('ADMIN', 'MODERATOR', 'USER')
+  @Idempotent(['orders:void-item', 'orders:items:void'])
   @Post(':id/items/:itemId/void')
   async voidItem(
     @TenantId() tenantId: string,
