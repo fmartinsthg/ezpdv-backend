@@ -180,21 +180,33 @@ let PaymentsService = class PaymentsService {
                 },
             });
             // Se havia intent OPEN e quitou, marcar COMPLETED
-            if (openIntent) {
-                const newCaptured = netCaptured.add(amount);
-                if (newCaptured.gte(orderTotal)) {
-                    await tx.paymentIntent.update({
-                        where: { id: openIntent.id },
-                        data: { status: client_1.PaymentIntentStatus.COMPLETED },
-                    });
-                }
+            const newCaptured = netCaptured.add(amount);
+            if (openIntent && newCaptured.gte(orderTotal)) {
+                await tx.paymentIntent.update({
+                    where: { id: openIntent.id },
+                    data: { status: client_1.PaymentIntentStatus.COMPLETED },
+                });
+            }
+            // ✅ Atualiza flags financeiras da Order (isSettled/paidAt) quando zera o restante
+            if (newCaptured.gte(orderTotal)) {
+                const current = await tx.order.findUnique({
+                    where: { id: orderId },
+                    select: { paidAt: true },
+                });
+                await tx.order.update({
+                    where: { id: orderId },
+                    data: {
+                        isSettled: true,
+                        paidAt: current?.paidAt ?? new Date(),
+                    },
+                });
             }
             return {
                 ...payment,
                 summary: {
                     orderTotal: orderTotal.toString(),
-                    capturedSum: netCaptured.add(amount).toString(),
-                    remainingDue: orderTotal.minus(netCaptured.add(amount)).toString(),
+                    capturedSum: newCaptured.toString(),
+                    remainingDue: orderTotal.minus(newCaptured).toString(),
                 },
             };
         }, { timeout: 20000 });
@@ -219,13 +231,14 @@ let PaymentsService = class PaymentsService {
         WHERE "id" = ${payment.orderId} AND "tenantId" = ${tenantId}
         FOR UPDATE
       `;
+            // Limite de reembolso por pagamento
             const refundedAgg = await tx.paymentTransaction.aggregate({
                 where: { tenantId, paymentId, type: client_1.PaymentTransactionType.REFUND },
                 _sum: { amount: true },
             });
-            const alreadyRefunded = this.q2(refundedAgg._sum.amount ?? 0);
-            const remaining = this.q2(payment.amount).minus(alreadyRefunded);
-            if (amount.gt(remaining)) {
+            const alreadyRefundedForThisPayment = this.q2(refundedAgg._sum.amount ?? 0);
+            const remainingForThisPayment = this.q2(payment.amount).minus(alreadyRefundedForThisPayment);
+            if (amount.gt(remainingForThisPayment)) {
                 throw new common_1.ConflictException('Refund amount exceeds remaining captured amount for this payment');
             }
             const gw = await this.gateway.refund({
@@ -247,11 +260,50 @@ let PaymentsService = class PaymentsService {
                     reason: dto.reason,
                 },
             });
-            const newRemaining = remaining.minus(amount);
-            if (newRemaining.lte(0)) {
+            const newRemainingForThisPayment = remainingForThisPayment.minus(amount);
+            if (newRemainingForThisPayment.lte(0)) {
                 await tx.payment.update({
                     where: { id: payment.id },
                     data: { status: client_1.PaymentStatus.REFUNDED },
+                });
+            }
+            // ✅ Recalcula posição financeira da ORDEM e ajusta flags
+            const orderAgg = await tx.payment.aggregate({
+                where: { tenantId, orderId: payment.orderId, status: client_1.PaymentStatus.CAPTURED },
+                _sum: { amount: true },
+            });
+            const refundsAgg = await tx.paymentTransaction.aggregate({
+                where: {
+                    tenantId,
+                    type: client_1.PaymentTransactionType.REFUND,
+                    payment: { orderId: payment.orderId },
+                },
+                _sum: { amount: true },
+            });
+            const capturedForOrder = this.q2(orderAgg._sum.amount ?? 0);
+            const refundedForOrder = this.q2(refundsAgg._sum.amount ?? 0);
+            const netCapturedForOrder = capturedForOrder.minus(refundedForOrder);
+            const orderRow = await tx.order.findUnique({
+                where: { id: payment.orderId },
+                select: { total: true, paidAt: true },
+            });
+            const orderTotal = this.q2(orderRow.total);
+            if (netCapturedForOrder.gte(orderTotal)) {
+                await tx.order.update({
+                    where: { id: payment.orderId },
+                    data: {
+                        isSettled: true,
+                        paidAt: orderRow.paidAt ?? new Date(),
+                    },
+                });
+            }
+            else {
+                await tx.order.update({
+                    where: { id: payment.orderId },
+                    data: {
+                        isSettled: false,
+                        paidAt: null,
+                    },
                 });
             }
             return tx.payment.findUnique({ where: { id: payment.id } });
@@ -289,6 +341,8 @@ let PaymentsService = class PaymentsService {
                     reason: dto.reason ?? 'cancel',
                 },
             });
+            // Observação: cancelamento de PENDING não altera os somatórios capturados,
+            // portanto não mexemos nas flags isSettled/paidAt aqui.
             return updated;
         });
     }
