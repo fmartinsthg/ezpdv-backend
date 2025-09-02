@@ -20,26 +20,52 @@ let OrdersService = class OrdersService {
         this.prisma = prisma;
         this.jwtService = jwtService;
     }
-    /* -------------------------- Helpers -------------------------- */
+    /* -------------------------- If-Match helpers -------------------------- */
+    /** Aceita 5, "5", W/"5". Retorna número inteiro ou null se não enviado. */
+    parseIfMatch(ifMatch) {
+        if (!ifMatch)
+            return null;
+        const cleaned = String(ifMatch)
+            .trim()
+            .replace(/^W\/"?/, "")
+            .replace(/"$/, "");
+        const n = Number(cleaned);
+        return Number.isFinite(n) ? Math.trunc(n) : null;
+    }
+    /** Confere If-Match com a versão atual da ordem. Lança 412 se divergir. */
+    async assertIfMatch(tenantId, orderId, ifMatch) {
+        const expected = this.parseIfMatch(ifMatch);
+        if (expected == null)
+            return; // header não enviado -> não valida
+        const row = await this.prisma.order.findFirst({
+            where: { id: orderId, tenantId },
+            select: { version: true },
+        });
+        if (!row)
+            throw new common_1.NotFoundException("Comanda não encontrada.");
+        if (row.version !== expected) {
+            throw new common_1.PreconditionFailedException(`If-Match falhou: versão atual é ${row.version}, esperada ${expected}.`);
+        }
+    }
+    /* -------------------------- Utils -------------------------- */
     toDecimal(n, fallback = 0) {
         if (n === undefined || n === null)
             return new client_1.Prisma.Decimal(fallback);
-        return new client_1.Prisma.Decimal(typeof n === 'string' ? n : n.toString());
+        return new client_1.Prisma.Decimal(typeof n === "string" ? n : n.toString());
     }
     async loadProductsMap(tenantId, productIds) {
         const products = await this.prisma.product.findMany({
             where: { tenantId, id: { in: productIds } },
             select: { id: true, price: true, isActive: true },
         });
-        const map = new Map(products.map((p) => [p.id, p]));
-        return map;
+        return new Map(products.map((p) => [p.id, p]));
     }
     async assertOrderInTenant(tenantId, id) {
         const order = await this.prisma.order.findFirst({
             where: { id, tenantId },
         });
         if (!order)
-            throw new common_1.NotFoundException('Comanda não encontrada.');
+            throw new common_1.NotFoundException("Comanda não encontrada.");
         return order;
     }
     async computeRequiredInventory(tenantId, items, tx) {
@@ -58,7 +84,7 @@ let OrdersService = class OrdersService {
                 required.set(line.inventoryItemId, prev.plus(need));
             }
         }
-        return required; // Map<inventoryItemId, qty>
+        return required;
     }
     async checkAndDebitInventorySerializable(tenantId, orderId, required) {
         let attempt = 0;
@@ -75,7 +101,7 @@ let OrdersService = class OrdersService {
                     for (const inv of items) {
                         const need = required.get(inv.id) || this.toDecimal(0);
                         if (new client_1.Prisma.Decimal(inv.onHand).lt(need)) {
-                            throw new common_1.ConflictException('Estoque insuficiente para produção.');
+                            throw new common_1.ConflictException("Estoque insuficiente para produção.");
                         }
                     }
                     for (const inv of items) {
@@ -94,14 +120,15 @@ let OrdersService = class OrdersService {
                                 type: client_1.StockMovementType.SALE,
                                 qtyDelta: need.negated(),
                                 relatedOrderId: orderId,
-                                reason: 'ORDER_ITEM_FIRE',
+                                reason: "ORDER_ITEM_FIRE",
                             },
                         });
                     }
                 }, { isolationLevel: client_1.Prisma.TransactionIsolationLevel.Serializable });
             }
             catch (e) {
-                if (e?.code === 'P2034' || String(e?.message || '').includes('could not serialize access')) {
+                if (e?.code === "P2034" ||
+                    String(e?.message || "").includes("could not serialize access")) {
                     if (++attempt >= MAX_RETRIES)
                         throw e;
                     await new Promise((r) => setTimeout(r, 50 * attempt));
@@ -139,15 +166,17 @@ let OrdersService = class OrdersService {
                                 type: client_1.StockMovementType.ADJUSTMENT,
                                 qtyDelta: qty,
                                 relatedOrderId: orderId,
-                                reason: 'ORDER_ITEM_VOID_OR_CANCEL',
+                                reason: "ORDER_ITEM_VOID_OR_CANCEL",
                             },
                         });
                     }
                 }, { isolationLevel: client_1.Prisma.TransactionIsolationLevel.Serializable });
             }
             catch (e) {
-                if (e?.code === 'P2034' || String(e?.message || '').includes('could not serialize access')) {
-                    if (++attempt >= MAX_RETRIES)
+                // Re-tentativa em caso de serialization failure
+                if (e?.code === "P2034" ||
+                    String(e?.message || "").includes("could not serialize access")) {
+                    if (++attempt >= 3)
                         throw e;
                     await new Promise((r) => setTimeout(r, 50 * attempt));
                     continue;
@@ -156,24 +185,30 @@ let OrdersService = class OrdersService {
             }
         }
     }
-    /** Recalcula subtotal/total (exclui itens VOID). Aceita PrismaClient ou TransactionClient. */
+    /** Recalcula subtotal/total e incrementa a versão. */
     async recomputeOrderTotals(tenantId, orderId, db) {
         const client = (db ?? this.prisma);
         const sums = await client.orderItem.aggregate({
             where: {
                 tenantId,
                 orderId,
-                status: { in: [client_1.OrderItemStatus.STAGED, client_1.OrderItemStatus.FIRED, client_1.OrderItemStatus.CLOSED] },
+                status: {
+                    in: [
+                        client_1.OrderItemStatus.STAGED,
+                        client_1.OrderItemStatus.FIRED,
+                        client_1.OrderItemStatus.CLOSED,
+                    ],
+                },
             },
             _sum: { total: true },
         });
         const subtotal = new client_1.Prisma.Decimal(sums._sum.total || 0);
-        const total = subtotal; // sem discount em Orders
+        const total = subtotal;
         await client.order.update({
             where: { id: orderId },
             data: {
                 subtotal,
-                discount: new client_1.Prisma.Decimal(0), // manter consistente se a coluna existir
+                discount: new client_1.Prisma.Decimal(0),
                 total,
                 version: { increment: 1 },
             },
@@ -192,15 +227,16 @@ let OrdersService = class OrdersService {
         const prodIds = Array.from(new Set(dto.items.map((i) => i.productId)));
         const prodMap = await this.loadProductsMap(tenantId, prodIds);
         if (prodMap.size !== prodIds.length) {
-            throw new common_1.NotFoundException('Produto(s) não encontrado(s) no tenant.');
+            throw new common_1.NotFoundException("Produto(s) não encontrado(s) no tenant.");
         }
         let subtotal = new client_1.Prisma.Decimal(0);
         const itemsData = dto.items.map((it) => {
             const p = prodMap.get(it.productId);
-            if (!p.isActive) {
-                throw new common_1.BadRequestException('Produto inativo.');
-            }
-            const unitPrice = it.unitPrice !== undefined ? this.toDecimal(it.unitPrice) : new client_1.Prisma.Decimal(p.price);
+            if (!p.isActive)
+                throw new common_1.BadRequestException("Produto inativo.");
+            const unitPrice = it.unitPrice !== undefined
+                ? this.toDecimal(it.unitPrice)
+                : new client_1.Prisma.Decimal(p.price);
             const qty = new client_1.Prisma.Decimal(it.quantity);
             const totalItem = unitPrice.times(qty);
             subtotal = subtotal.plus(totalItem);
@@ -229,16 +265,14 @@ let OrdersService = class OrdersService {
                     assignedToUserId: user.userId,
                     items: { create: itemsData },
                 },
-                include: {
-                    items: true,
-                },
+                include: { items: true },
             });
             return order;
         }
         catch (err) {
-            if (err?.code === 'P2002') {
-                const target = String(err?.meta?.target || '');
-                if (target.includes('tenantId_idempotencyKey')) {
+            if (err?.code === "P2002") {
+                const target = String(err?.meta?.target || "");
+                if (target.includes("tenantId_idempotencyKey")) {
                     const existing = await this.prisma.order.findFirst({
                         where: { tenantId, idempotencyKey },
                         include: { items: true },
@@ -246,13 +280,13 @@ let OrdersService = class OrdersService {
                     if (existing)
                         return existing;
                 }
-                throw new common_1.BadRequestException('Violação de unicidade.');
+                throw new common_1.BadRequestException("Violação de unicidade.");
             }
-            if (err?.code === 'P2003') {
-                throw new common_1.BadRequestException('Relacionamento inválido (FK). Verifique IDs informados.');
+            if (err?.code === "P2003") {
+                throw new common_1.BadRequestException("Relacionamento inválido (FK). Verifique IDs informados.");
             }
-            if (err?.code === '22P02') {
-                throw new common_1.BadRequestException('IDs devem ser UUID válidos.');
+            if (err?.code === "22P02") {
+                throw new common_1.BadRequestException("IDs devem ser UUID válidos.");
             }
             throw err;
         }
@@ -265,14 +299,13 @@ let OrdersService = class OrdersService {
         if (status)
             where.status = status;
         if (q)
-            where.tabNumber = { contains: q, mode: 'insensitive' };
-        if (String(mine).toLowerCase() === 'true') {
+            where.tabNumber = { contains: q, mode: "insensitive" };
+        if (String(mine).toLowerCase() === "true")
             where.assignedToUserId = user.userId;
-        }
         const [items, total] = await Promise.all([
             this.prisma.order.findMany({
                 where,
-                orderBy: { createdAt: 'desc' },
+                orderBy: { createdAt: "desc" },
                 skip,
                 take,
                 select: {
@@ -297,33 +330,36 @@ let OrdersService = class OrdersService {
             totalPages: Math.ceil(total / take),
         };
     }
-    async findOne(tenantId, id) {
+    async findOne(tenantId, id, opts) {
         const order = await this.prisma.order.findFirst({
             where: { id, tenantId },
             include: {
                 items: true,
+                ...(opts?.includePayments ? { payments: true } : {}),
             },
         });
         if (!order)
-            throw new common_1.NotFoundException('Comanda não encontrada.');
+            throw new common_1.NotFoundException("Comanda não encontrada.");
         return order;
     }
-    async appendItems(tenantId, user, orderId, dto) {
+    async appendItems(tenantId, user, orderId, dto, ifMatch) {
+        await this.assertIfMatch(tenantId, orderId, ifMatch);
         const order = await this.assertOrderInTenant(tenantId, orderId);
         if (order.status !== client_1.OrderStatus.OPEN) {
-            throw new common_1.BadRequestException('Somente comandas OPEN podem receber novos itens.');
+            throw new common_1.BadRequestException("Somente comandas OPEN podem receber novos itens.");
         }
         const prodIds = Array.from(new Set(dto.items.map((i) => i.productId)));
         const prodMap = await this.loadProductsMap(tenantId, prodIds);
         if (prodMap.size !== prodIds.length) {
-            throw new common_1.NotFoundException('Produto(s) não encontrado(s) no tenant.');
+            throw new common_1.NotFoundException("Produto(s) não encontrado(s) no tenant.");
         }
         const itemsData = dto.items.map((it) => {
             const p = prodMap.get(it.productId);
-            if (!p.isActive) {
-                throw new common_1.BadRequestException('Produto inativo.');
-            }
-            const unitPrice = it.unitPrice !== undefined ? this.toDecimal(it.unitPrice) : new client_1.Prisma.Decimal(p.price);
+            if (!p.isActive)
+                throw new common_1.BadRequestException("Produto inativo.");
+            const unitPrice = it.unitPrice !== undefined
+                ? this.toDecimal(it.unitPrice)
+                : new client_1.Prisma.Decimal(p.price);
             const qty = new client_1.Prisma.Decimal(it.quantity);
             const totalItem = unitPrice.times(qty);
             return {
@@ -343,7 +379,13 @@ let OrdersService = class OrdersService {
                 where: {
                     orderId,
                     tenantId,
-                    status: { in: [client_1.OrderItemStatus.STAGED, client_1.OrderItemStatus.FIRED, client_1.OrderItemStatus.CLOSED] },
+                    status: {
+                        in: [
+                            client_1.OrderItemStatus.STAGED,
+                            client_1.OrderItemStatus.FIRED,
+                            client_1.OrderItemStatus.CLOSED,
+                        ],
+                    },
                 },
                 _sum: { total: true },
             });
@@ -362,10 +404,11 @@ let OrdersService = class OrdersService {
         });
         return this.findOne(tenantId, orderId);
     }
-    async fireItems(tenantId, user, orderId, dto) {
+    async fireItems(tenantId, user, orderId, dto, ifMatch) {
+        await this.assertIfMatch(tenantId, orderId, ifMatch);
         const order = await this.assertOrderInTenant(tenantId, orderId);
         if (order.status !== client_1.OrderStatus.OPEN) {
-            throw new common_1.BadRequestException('Apenas comandas OPEN podem disparar itens.');
+            throw new common_1.BadRequestException("Apenas comandas OPEN podem disparar itens.");
         }
         const whereItems = {
             tenantId,
@@ -395,39 +438,43 @@ let OrdersService = class OrdersService {
         });
         return this.findOne(tenantId, orderId);
     }
-    async voidItem(tenantId, user, orderId, itemId, dto, approvalToken) {
-        // Valida aprovação
+    async voidItem(tenantId, user, orderId, itemId, dto, approvalToken, ifMatch) {
+        await this.assertIfMatch(tenantId, orderId, ifMatch);
+        // valida aprovação (inalterado)
         let approver;
         try {
-            const tokenStr = (approvalToken || '').replace(/^Bearer\s+/i, '');
+            const tokenStr = (approvalToken || "").replace(/^Bearer\s+/i, "");
             approver = this.jwtService.verify(tokenStr, {
-                secret: process.env.JWT_SECRET || 'ezpdv-secret',
+                secret: process.env.JWT_SECRET || "ezpdv-secret",
             });
         }
         catch {
-            throw new common_1.ForbiddenException('Token de aprovação inválido.');
+            throw new common_1.ForbiddenException("Token de aprovação inválido.");
         }
         const approverRoles = new Set();
         if (approver?.systemRole)
             approverRoles.add(String(approver.systemRole).toUpperCase());
         if (approver?.role)
             approverRoles.add(String(approver.role).toUpperCase());
-        if (!['SUPERADMIN', 'ADMIN', 'MODERATOR'].some((r) => approverRoles.has(r))) {
-            throw new common_1.ForbiddenException('Aprovação requer MODERATOR/ADMIN/SUPERADMIN.');
+        if (!["SUPERADMIN", "ADMIN", "MODERATOR"].some((r) => approverRoles.has(r))) {
+            throw new common_1.ForbiddenException("Aprovação requer MODERATOR/ADMIN/SUPERADMIN.");
         }
         const item = await this.prisma.orderItem.findFirst({
             where: { id: itemId, orderId, tenantId },
             select: { id: true, status: true, productId: true, quantity: true },
         });
         if (!item)
-            throw new common_1.NotFoundException('Item não encontrado.');
+            throw new common_1.NotFoundException("Item não encontrado.");
         if (item.status !== client_1.OrderItemStatus.FIRED) {
-            throw new common_1.BadRequestException('Somente itens FIRED podem ser anulados (VOID).');
+            throw new common_1.BadRequestException("Somente itens FIRED podem ser anulados (VOID).");
         }
-        // Credita estoque
-        const toCredit = await this.computeRequiredInventory(tenantId, [{ productId: item.productId, quantity: new client_1.Prisma.Decimal(item.quantity) }], this.prisma);
+        const toCredit = await this.computeRequiredInventory(tenantId, [
+            {
+                productId: item.productId,
+                quantity: new client_1.Prisma.Decimal(item.quantity),
+            },
+        ], this.prisma);
         await this.creditInventorySerializable(tenantId, orderId, toCredit);
-        // VOID + recálculo de totais na mesma transação
         await this.prisma.$transaction(async (tx) => {
             await tx.orderItem.update({
                 where: { id: item.id },
@@ -443,10 +490,11 @@ let OrdersService = class OrdersService {
         });
         return this.findOne(tenantId, orderId);
     }
-    async cancel(tenantId, _user, orderId) {
+    async cancel(tenantId, _user, orderId, ifMatch) {
+        await this.assertIfMatch(tenantId, orderId, ifMatch);
         const order = await this.assertOrderInTenant(tenantId, orderId);
         if (order.status !== client_1.OrderStatus.OPEN) {
-            throw new common_1.BadRequestException('Somente comandas OPEN podem ser canceladas.');
+            throw new common_1.BadRequestException("Somente comandas OPEN podem ser canceladas.");
         }
         const activeCount = await this.prisma.orderItem.count({
             where: {
@@ -456,7 +504,7 @@ let OrdersService = class OrdersService {
             },
         });
         if (activeCount > 0) {
-            throw new common_1.BadRequestException('Remova itens STAGED e faça VOID dos FIRED antes de cancelar a comanda.');
+            throw new common_1.BadRequestException("Remova itens STAGED e faça VOID dos FIRED antes de cancelar a comanda.");
         }
         const updated = await this.prisma.$transaction(async (tx) => {
             await tx.order.update({
@@ -471,16 +519,17 @@ let OrdersService = class OrdersService {
         });
         return updated;
     }
-    async close(tenantId, _user, orderId, _dto) {
+    async close(tenantId, _user, orderId, _dto, ifMatch) {
+        await this.assertIfMatch(tenantId, orderId, ifMatch);
         const order = await this.assertOrderInTenant(tenantId, orderId);
         if (order.status !== client_1.OrderStatus.OPEN) {
-            throw new common_1.BadRequestException('Somente comandas OPEN podem ser fechadas.');
+            throw new common_1.BadRequestException("Somente comandas OPEN podem ser fechadas.");
         }
         const staged = await this.prisma.orderItem.count({
             where: { tenantId, orderId, status: client_1.OrderItemStatus.STAGED },
         });
         if (staged > 0) {
-            throw new common_1.BadRequestException('Há itens STAGED. Remova-os ou faça FIRE antes de fechar.');
+            throw new common_1.BadRequestException("Há itens STAGED. Remova-os ou faça FIRE antes de fechar.");
         }
         const result = await this.prisma.$transaction(async (tx) => {
             await tx.orderItem.updateMany({

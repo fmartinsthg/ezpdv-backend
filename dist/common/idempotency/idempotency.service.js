@@ -17,6 +17,8 @@ const idempotency_constants_1 = require("./idempotency.constants");
 let IdempotencyService = class IdempotencyService {
     constructor(prisma) {
         this.prisma = prisma;
+        /** Exposto para debug/telemetria se necessário */
+        this.allowedScopes = idempotency_constants_1.IDEMPOTENCY_ALLOWED_SCOPES;
         /** Mapa de sinônimos → escopo CANÔNICO */
         this.scopeMap = {
             // Orders
@@ -34,16 +36,16 @@ let IdempotencyService = class IdempotencyService {
             'payments:cancel': 'payments:cancel',
         };
     }
-    /** Retorna a forma canônica do escopo (ou o próprio se não houver mapeamento) */
+    /** Retorna a forma canônica do escopo (ou o próprio se não houver mapeamento). */
     canonicalScope(input) {
         const s = (input || '').trim();
         return this.scopeMap[s] || s;
     }
     /**
      * Valida headers de idempotência:
-     *  - scopeHeader presente e pertencente ao conjunto de escopos permitidos para o handler (considerando sinônimos);
+     *  - scopeHeader presente e pertencente ao conjunto permitido no handler (com sinônimos);
      *  - keyHeader presente.
-     * Lança 400 se inválido.
+     *  - (opcional) verifica também contra a allowlist global (defensivo).
      */
     validateHeadersOrThrow(allowedFromHandler, scopeHeader, keyHeader) {
         const allowed = Array.isArray(allowedFromHandler)
@@ -55,27 +57,33 @@ let IdempotencyService = class IdempotencyService {
         const canonicalHeader = this.canonicalScope(scopeHeader);
         const canonicalAllowed = new Set(allowed.map((s) => this.canonicalScope(s)));
         if (!canonicalAllowed.has(canonicalHeader)) {
-            throw new common_1.BadRequestException('Escopo de idempotência não permitido.');
+            throw new common_1.BadRequestException('Escopo de idempotência não permitido para este endpoint.');
+        }
+        // Checagem extra contra allowlist global (hardening)
+        if (!idempotency_constants_1.IDEMPOTENCY_ALLOWED_SCOPES.has(canonicalHeader)) {
+            throw new common_1.BadRequestException('Escopo de idempotência não é suportado globalmente.');
         }
         if (!keyHeader) {
             throw new common_1.BadRequestException('Idempotency-Key é obrigatório.');
         }
     }
-    async beginOrReplay(tenantId, scope, // pode vir em qualquer forma; será canônico abaixo
-    key, requestHash) {
-        // Canoniza e valida contra set global
+    /**
+     * Registra a chave (primeira vez) ou detecta condições de REPLAY/IN_PROGRESS/RETRY.
+     * Sempre persiste escopo **canônico**.
+     */
+    async beginOrReplay(tenantId, scope, key, requestHash) {
         const canonical = this.canonicalScope(scope);
         if (!idempotency_constants_1.IDEMPOTENCY_ALLOWED_SCOPES.has(canonical)) {
             throw new common_1.BadRequestException('Escopo de idempotência não permitido.');
         }
         const now = new Date();
         const expiresAt = new Date(now.getTime() + idempotency_constants_1.IDEMPOTENCY_DEFAULTS.TTL_HOURS * 3600 * 1000);
-        // Tenta criar o registro (caminho comum: primeira execução)
+        // Caminho comum: primeira execução → cria registro em PROCESSING
         try {
             const created = await this.prisma.idempotencyKey.create({
                 data: {
                     tenantId,
-                    scope: canonical, // sempre persistir canônico
+                    scope: canonical,
                     key,
                     status: client_1.IdempotencyStatus.PROCESSING,
                     requestHash,
@@ -87,14 +95,14 @@ let IdempotencyService = class IdempotencyService {
         }
         catch (e) {
             if (e?.code !== 'P2002')
-                throw e; // não é conflito de unique → propaga
+                throw e; // não é unique → propaga
         }
-        // Já existe (mesma (tenant, scope, key))
+        // Já existe (mesma chave no mesmo tenant/escopo)
         const existing = await this.prisma.idempotencyKey.findUnique({
             where: { tenantId_scope_key: { tenantId, scope: canonical, key } },
         });
         if (!existing) {
-            // Janela rara: índice ainda não refletiu? Tenta criar novamente
+            // Condição rara de visibilidade do índice → tenta criar novamente
             const created = await this.prisma.idempotencyKey.create({
                 data: {
                     tenantId,
@@ -126,7 +134,7 @@ let IdempotencyService = class IdempotencyService {
             });
             return { action: 'PROCEED', recordId: updated.id };
         }
-        // Succeeded → REPLAY (exige payload igual)
+        // SUCCEEDED → REPLAY (somente se payload idêntico)
         if (existing.status === client_1.IdempotencyStatus.SUCCEEDED) {
             if (existing.requestHash !== requestHash) {
                 throw new common_1.ConflictException('IDEMPOTENCY_PAYLOAD_MISMATCH');
@@ -137,7 +145,7 @@ let IdempotencyService = class IdempotencyService {
                 responseBody: existing.responseBody ?? {},
             };
         }
-        // Failed → reprocessa
+        // FAILED → reprocessa (abre novamente)
         if (existing.status === client_1.IdempotencyStatus.FAILED) {
             const updated = await this.prisma.idempotencyKey.update({
                 where: { id: existing.id },
@@ -152,17 +160,30 @@ let IdempotencyService = class IdempotencyService {
             });
             return { action: 'PROCEED', recordId: updated.id };
         }
-        // PROCESSING → 429 (emitted pelo interceptor)
+        // PROCESSING → o Interceptor retornará 429/Retry-After
         return { action: 'IN_PROGRESS' };
     }
+    /**
+     * Marca SUCCEEDED com snapshot (até X bytes) + hints de recurso.
+     * Se exceder o limite, grava um corpo mínimo com `truncated: true`.
+     */
     async succeed(recordId, responseCode, responseBody, options) {
         const limit = options?.truncateAtBytes ?? idempotency_constants_1.IDEMPOTENCY_DEFAULTS.SNAPSHOT_MAX_BYTES;
-        const raw = JSON.stringify(responseBody ?? {});
-        const bytes = Buffer.byteLength(raw, 'utf8');
-        let bodyToStore = (responseBody ??
-            {});
+        let bodyToStore = (responseBody ?? {});
         let truncated = false;
-        if (bytes > limit) {
+        try {
+            const raw = JSON.stringify(responseBody ?? {});
+            const bytes = Buffer.byteLength(raw, 'utf8');
+            if (bytes > limit) {
+                bodyToStore = {
+                    resourceId: options?.resourceId ?? null,
+                    truncated: true,
+                };
+                truncated = true;
+            }
+        }
+        catch {
+            // fallback: se não serializa, guarda payload mínimo
             bodyToStore = {
                 resourceId: options?.resourceId ?? null,
                 truncated: true,
@@ -173,7 +194,7 @@ let IdempotencyService = class IdempotencyService {
             where: { id: recordId },
             data: {
                 status: client_1.IdempotencyStatus.SUCCEEDED,
-                responseCode,
+                responseCode: responseCode ?? 200,
                 responseBody: bodyToStore,
                 responseTruncated: truncated,
                 resourceType: options?.resourceType ?? null,
@@ -181,6 +202,7 @@ let IdempotencyService = class IdempotencyService {
             },
         });
     }
+    /** Marca FAILED e persiste um erro curto (até 500 chars). */
     async fail(recordId, errorCode, errorMessage) {
         try {
             await this.prisma.idempotencyKey.update({
@@ -188,7 +210,7 @@ let IdempotencyService = class IdempotencyService {
                 data: {
                     status: client_1.IdempotencyStatus.FAILED,
                     errorCode,
-                    errorMessage: errorMessage?.slice(0, 500) ?? null,
+                    errorMessage: (errorMessage ?? '').slice(0, 500) || null,
                 },
             });
         }

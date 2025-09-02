@@ -33,10 +33,11 @@ import {
   ApiParam,
 } from '@nestjs/swagger';
 import { Idempotent } from '../common/idempotency/idempotency.decorator';
+import { presentOrder } from './order.presenter';
 
 @ApiTags('orders')
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard) // TenantContextGuard já está global
+@UseGuards(JwtAuthGuard, RolesGuard) // TenantContext guard global já ativo
 @Controller('tenants/:tenantId/orders')
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}
@@ -53,10 +54,10 @@ export class OrdersController {
     @TenantId() tenantId: string,
     @CurrentUser() user: AuthUser,
     @Body() dto: CreateOrderDto,
-    // Headers de idempotência são validados pelo interceptor global
-    @Headers('idempotency-key') _idempotencyKey?: string,
+    @Headers('idempotency-key') _idempotencyKey?: string, // o interceptor já valida/usa
   ) {
-    return this.ordersService.create(tenantId, user, dto);
+    const order = await this.ordersService.create(tenantId, user, dto);
+    return presentOrder(order);
   }
 
   @ApiOperation({ summary: 'Listar comandas do tenant (filtros/paginação)' })
@@ -69,7 +70,11 @@ export class OrdersController {
     @CurrentUser() user: AuthUser,
     @Query() query: OrdersQueryDto,
   ) {
-    return this.ordersService.findAll(tenantId, user, query);
+    const result = await this.ordersService.findAll(tenantId, user, query);
+    return {
+      ...result,
+      items: result.items.map(presentOrder),
+    };
   }
 
   @ApiOperation({ summary: 'Obter comanda por ID (detalhe)' })
@@ -82,16 +87,14 @@ export class OrdersController {
     @CurrentUser() _user: AuthUser,
     @Param('id', new ParseUUIDPipe()) id: string,
   ) {
-    return this.ordersService.findOne(tenantId, id);
+    const order = await this.ordersService.findOne(tenantId, id, { includePayments: true });
+    return presentOrder(order);
   }
 
   @ApiOperation({ summary: 'Adicionar itens STAGED na comanda' })
+  @ApiHeader({ name: 'If-Match', required: false, description: 'Versão atual (ex.: 5, "5" ou W/"5")' })
   @ApiHeader({ name: 'Idempotency-Key', required: true })
-  @ApiHeader({
-    name: 'Idempotency-Scope',
-    required: true,
-    description: 'orders:append-items (ou sinônimo: orders:items:append)',
-  })
+  @ApiHeader({ name: 'Idempotency-Scope', required: true, description: 'orders:append-items (ou orders:items:append)' })
   @ApiResponse({ status: 200 })
   @ApiParam({ name: 'tenantId', type: 'string', format: 'uuid' })
   @Roles('ADMIN', 'MODERATOR', 'USER')
@@ -102,11 +105,14 @@ export class OrdersController {
     @CurrentUser() user: AuthUser,
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: AppendItemsDto,
+    @Headers('if-match') ifMatch?: string,
   ) {
-    return this.ordersService.appendItems(tenantId, user, id, dto);
+    const order = await this.ordersService.appendItems(tenantId, user, id, dto, ifMatch);
+    return presentOrder(order);
   }
 
   @ApiOperation({ summary: 'Disparar (FIRE) itens STAGED para produção' })
+  @ApiHeader({ name: 'If-Match', required: false })
   @ApiHeader({ name: 'Idempotency-Key', required: true })
   @ApiHeader({ name: 'Idempotency-Scope', required: true, description: 'Valor fixo: orders:fire' })
   @ApiResponse({ status: 200, description: 'Itens marcados como FIRED e estoque debitado' })
@@ -119,18 +125,17 @@ export class OrdersController {
     @CurrentUser() user: AuthUser,
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: FireDto,
+    @Headers('if-match') ifMatch?: string,
   ) {
-    return this.ordersService.fireItems(tenantId, user, id, dto);
+    const order = await this.ordersService.fireItems(tenantId, user, id, dto, ifMatch);
+    return presentOrder(order);
   }
 
   @ApiOperation({ summary: 'VOID de item FIRED (requer aprovação extra)' })
-  @ApiHeader({ name: 'X-Approval-Token', required: true, description: 'JWT de MODERATOR/ADMIN/SUPERADMIN (pode usar "Bearer ...")' })
+  @ApiHeader({ name: 'If-Match', required: false })
+  @ApiHeader({ name: 'X-Approval-Token', required: true, description: 'JWT de MODERATOR/ADMIN/SUPERADMIN (pode ser "Bearer ...")' })
   @ApiHeader({ name: 'Idempotency-Key', required: true })
-  @ApiHeader({
-    name: 'Idempotency-Scope',
-    required: true,
-    description: 'orders:void-item (ou sinônimo: orders:items:void)',
-  })
+  @ApiHeader({ name: 'Idempotency-Scope', required: true, description: 'orders:void-item (ou orders:items:void)' })
   @ApiResponse({ status: 200, description: 'Item anulado e estoque recreditado' })
   @ApiParam({ name: 'tenantId', type: 'string', format: 'uuid' })
   @Roles('ADMIN', 'MODERATOR', 'USER')
@@ -143,14 +148,25 @@ export class OrdersController {
     @Param('itemId', new ParseUUIDPipe()) itemId: string,
     @Body() dto: VoidItemDto,
     @Headers('x-approval-token') approvalToken?: string,
+    @Headers('if-match') ifMatch?: string,
   ) {
     if (!approvalToken) {
       throw new ForbiddenException('Aprovação requerida (X-Approval-Token).');
     }
-    return this.ordersService.voidItem(tenantId, user, id, itemId, dto, approvalToken);
+    const order = await this.ordersService.voidItem(
+      tenantId,
+      user,
+      id,
+      itemId,
+      dto,
+      approvalToken,
+      ifMatch,
+    );
+    return presentOrder(order);
   }
 
   @ApiOperation({ summary: 'Cancelar comanda (somente sem itens ativos)' })
+  @ApiHeader({ name: 'If-Match', required: false })
   @ApiHeader({ name: 'Idempotency-Key', required: true })
   @ApiHeader({ name: 'Idempotency-Scope', required: true, description: 'Valor fixo: orders:cancel' })
   @ApiResponse({ status: 200 })
@@ -162,16 +178,19 @@ export class OrdersController {
     @TenantId() tenantId: string,
     @CurrentUser() user: AuthUser,
     @Param('id', new ParseUUIDPipe()) id: string,
+    @Headers('if-match') ifMatch?: string,
   ) {
-    return this.ordersService.cancel(tenantId, user, id);
+    const order = await this.ordersService.cancel(tenantId, user, id, ifMatch);
+    return presentOrder(order);
   }
 
   @ApiOperation({ summary: 'Fechar comanda (handoff para módulo de Pagamentos/Caixa)' })
+  @ApiHeader({ name: 'If-Match', required: false })
   @ApiHeader({ name: 'Idempotency-Key', required: true })
   @ApiHeader({ name: 'Idempotency-Scope', required: true, description: 'Valor fixo: orders:close' })
   @ApiResponse({ status: 200 })
   @ApiParam({ name: 'tenantId', type: 'string', format: 'uuid' })
-  @Roles('ADMIN', 'MODERATOR', 'USER') // permite garçom fechar e levar ao caixa
+  @Roles('ADMIN', 'MODERATOR', 'USER') // garçom pode fechar
   @Idempotent('orders:close')
   @Post(':id/close')
   async close(
@@ -179,8 +198,9 @@ export class OrdersController {
     @CurrentUser() user: AuthUser,
     @Param('id', new ParseUUIDPipe()) id: string,
     @Body() dto: CloseOrderDto,
+    @Headers('if-match') ifMatch?: string,
   ) {
-    return this.ordersService.close(tenantId, user, id, dto);
-    // Interceptor global cuida da idempotência, snapshot e 429/409.
+    const order = await this.ordersService.close(tenantId, user, id, dto, ifMatch);
+    return presentOrder(order);
   }
 }

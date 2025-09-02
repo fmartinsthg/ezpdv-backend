@@ -28,37 +28,48 @@ const void_item_dto_1 = require("./dto/void-item.dto");
 const close_order_dto_1 = require("./dto/close-order.dto");
 const swagger_1 = require("@nestjs/swagger");
 const idempotency_decorator_1 = require("../common/idempotency/idempotency.decorator");
+const order_presenter_1 = require("./order.presenter");
 let OrdersController = class OrdersController {
     constructor(ordersService) {
         this.ordersService = ordersService;
     }
     async create(tenantId, user, dto, _idempotencyKey) {
-        return this.ordersService.create(tenantId, user, dto);
+        const order = await this.ordersService.create(tenantId, user, dto);
+        return (0, order_presenter_1.presentOrder)(order);
     }
     async findAll(tenantId, user, query) {
-        return this.ordersService.findAll(tenantId, user, query);
+        const result = await this.ordersService.findAll(tenantId, user, query);
+        return {
+            ...result,
+            items: result.items.map(order_presenter_1.presentOrder),
+        };
     }
     async findOne(tenantId, _user, id) {
-        return this.ordersService.findOne(tenantId, id);
+        const order = await this.ordersService.findOne(tenantId, id, { includePayments: true });
+        return (0, order_presenter_1.presentOrder)(order);
     }
-    async appendItems(tenantId, user, id, dto) {
-        return this.ordersService.appendItems(tenantId, user, id, dto);
+    async appendItems(tenantId, user, id, dto, ifMatch) {
+        const order = await this.ordersService.appendItems(tenantId, user, id, dto, ifMatch);
+        return (0, order_presenter_1.presentOrder)(order);
     }
-    async fireItems(tenantId, user, id, dto) {
-        return this.ordersService.fireItems(tenantId, user, id, dto);
+    async fireItems(tenantId, user, id, dto, ifMatch) {
+        const order = await this.ordersService.fireItems(tenantId, user, id, dto, ifMatch);
+        return (0, order_presenter_1.presentOrder)(order);
     }
-    async voidItem(tenantId, user, id, itemId, dto, approvalToken) {
+    async voidItem(tenantId, user, id, itemId, dto, approvalToken, ifMatch) {
         if (!approvalToken) {
             throw new common_1.ForbiddenException('Aprovação requerida (X-Approval-Token).');
         }
-        return this.ordersService.voidItem(tenantId, user, id, itemId, dto, approvalToken);
+        const order = await this.ordersService.voidItem(tenantId, user, id, itemId, dto, approvalToken, ifMatch);
+        return (0, order_presenter_1.presentOrder)(order);
     }
-    async cancel(tenantId, user, id) {
-        return this.ordersService.cancel(tenantId, user, id);
+    async cancel(tenantId, user, id, ifMatch) {
+        const order = await this.ordersService.cancel(tenantId, user, id, ifMatch);
+        return (0, order_presenter_1.presentOrder)(order);
     }
-    async close(tenantId, user, id, dto) {
-        return this.ordersService.close(tenantId, user, id, dto);
-        // Interceptor global cuida da idempotência, snapshot e 429/409.
+    async close(tenantId, user, id, dto, ifMatch) {
+        const order = await this.ordersService.close(tenantId, user, id, dto, ifMatch);
+        return (0, order_presenter_1.presentOrder)(order);
     }
 };
 exports.OrdersController = OrdersController;
@@ -107,12 +118,9 @@ __decorate([
 ], OrdersController.prototype, "findOne", null);
 __decorate([
     (0, swagger_1.ApiOperation)({ summary: 'Adicionar itens STAGED na comanda' }),
+    (0, swagger_1.ApiHeader)({ name: 'If-Match', required: false, description: 'Versão atual (ex.: 5, "5" ou W/"5")' }),
     (0, swagger_1.ApiHeader)({ name: 'Idempotency-Key', required: true }),
-    (0, swagger_1.ApiHeader)({
-        name: 'Idempotency-Scope',
-        required: true,
-        description: 'orders:append-items (ou sinônimo: orders:items:append)',
-    }),
+    (0, swagger_1.ApiHeader)({ name: 'Idempotency-Scope', required: true, description: 'orders:append-items (ou orders:items:append)' }),
     (0, swagger_1.ApiResponse)({ status: 200 }),
     (0, swagger_1.ApiParam)({ name: 'tenantId', type: 'string', format: 'uuid' }),
     (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR', 'USER'),
@@ -122,12 +130,14 @@ __decorate([
     __param(1, (0, current_user_decorator_1.CurrentUser)()),
     __param(2, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
     __param(3, (0, common_1.Body)()),
+    __param(4, (0, common_1.Headers)('if-match')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object, String, append_items_dto_1.AppendItemsDto]),
+    __metadata("design:paramtypes", [String, Object, String, append_items_dto_1.AppendItemsDto, String]),
     __metadata("design:returntype", Promise)
 ], OrdersController.prototype, "appendItems", null);
 __decorate([
     (0, swagger_1.ApiOperation)({ summary: 'Disparar (FIRE) itens STAGED para produção' }),
+    (0, swagger_1.ApiHeader)({ name: 'If-Match', required: false }),
     (0, swagger_1.ApiHeader)({ name: 'Idempotency-Key', required: true }),
     (0, swagger_1.ApiHeader)({ name: 'Idempotency-Scope', required: true, description: 'Valor fixo: orders:fire' }),
     (0, swagger_1.ApiResponse)({ status: 200, description: 'Itens marcados como FIRED e estoque debitado' }),
@@ -139,19 +149,17 @@ __decorate([
     __param(1, (0, current_user_decorator_1.CurrentUser)()),
     __param(2, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
     __param(3, (0, common_1.Body)()),
+    __param(4, (0, common_1.Headers)('if-match')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object, String, fire_dto_1.FireDto]),
+    __metadata("design:paramtypes", [String, Object, String, fire_dto_1.FireDto, String]),
     __metadata("design:returntype", Promise)
 ], OrdersController.prototype, "fireItems", null);
 __decorate([
     (0, swagger_1.ApiOperation)({ summary: 'VOID de item FIRED (requer aprovação extra)' }),
-    (0, swagger_1.ApiHeader)({ name: 'X-Approval-Token', required: true, description: 'JWT de MODERATOR/ADMIN/SUPERADMIN (pode usar "Bearer ...")' }),
+    (0, swagger_1.ApiHeader)({ name: 'If-Match', required: false }),
+    (0, swagger_1.ApiHeader)({ name: 'X-Approval-Token', required: true, description: 'JWT de MODERATOR/ADMIN/SUPERADMIN (pode ser "Bearer ...")' }),
     (0, swagger_1.ApiHeader)({ name: 'Idempotency-Key', required: true }),
-    (0, swagger_1.ApiHeader)({
-        name: 'Idempotency-Scope',
-        required: true,
-        description: 'orders:void-item (ou sinônimo: orders:items:void)',
-    }),
+    (0, swagger_1.ApiHeader)({ name: 'Idempotency-Scope', required: true, description: 'orders:void-item (ou orders:items:void)' }),
     (0, swagger_1.ApiResponse)({ status: 200, description: 'Item anulado e estoque recreditado' }),
     (0, swagger_1.ApiParam)({ name: 'tenantId', type: 'string', format: 'uuid' }),
     (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR', 'USER'),
@@ -163,12 +171,14 @@ __decorate([
     __param(3, (0, common_1.Param)('itemId', new common_1.ParseUUIDPipe())),
     __param(4, (0, common_1.Body)()),
     __param(5, (0, common_1.Headers)('x-approval-token')),
+    __param(6, (0, common_1.Headers)('if-match')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object, String, String, void_item_dto_1.VoidItemDto, String]),
+    __metadata("design:paramtypes", [String, Object, String, String, void_item_dto_1.VoidItemDto, String, String]),
     __metadata("design:returntype", Promise)
 ], OrdersController.prototype, "voidItem", null);
 __decorate([
     (0, swagger_1.ApiOperation)({ summary: 'Cancelar comanda (somente sem itens ativos)' }),
+    (0, swagger_1.ApiHeader)({ name: 'If-Match', required: false }),
     (0, swagger_1.ApiHeader)({ name: 'Idempotency-Key', required: true }),
     (0, swagger_1.ApiHeader)({ name: 'Idempotency-Scope', required: true, description: 'Valor fixo: orders:cancel' }),
     (0, swagger_1.ApiResponse)({ status: 200 }),
@@ -179,17 +189,19 @@ __decorate([
     __param(0, (0, tenant_decorator_1.TenantId)()),
     __param(1, (0, current_user_decorator_1.CurrentUser)()),
     __param(2, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __param(3, (0, common_1.Headers)('if-match')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object, String]),
+    __metadata("design:paramtypes", [String, Object, String, String]),
     __metadata("design:returntype", Promise)
 ], OrdersController.prototype, "cancel", null);
 __decorate([
     (0, swagger_1.ApiOperation)({ summary: 'Fechar comanda (handoff para módulo de Pagamentos/Caixa)' }),
+    (0, swagger_1.ApiHeader)({ name: 'If-Match', required: false }),
     (0, swagger_1.ApiHeader)({ name: 'Idempotency-Key', required: true }),
     (0, swagger_1.ApiHeader)({ name: 'Idempotency-Scope', required: true, description: 'Valor fixo: orders:close' }),
     (0, swagger_1.ApiResponse)({ status: 200 }),
     (0, swagger_1.ApiParam)({ name: 'tenantId', type: 'string', format: 'uuid' }),
-    (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR', 'USER') // permite garçom fechar e levar ao caixa
+    (0, roles_decorator_1.Roles)('ADMIN', 'MODERATOR', 'USER') // garçom pode fechar
     ,
     (0, idempotency_decorator_1.Idempotent)('orders:close'),
     (0, common_1.Post)(':id/close'),
@@ -197,14 +209,15 @@ __decorate([
     __param(1, (0, current_user_decorator_1.CurrentUser)()),
     __param(2, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
     __param(3, (0, common_1.Body)()),
+    __param(4, (0, common_1.Headers)('if-match')),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, Object, String, close_order_dto_1.CloseOrderDto]),
+    __metadata("design:paramtypes", [String, Object, String, close_order_dto_1.CloseOrderDto, String]),
     __metadata("design:returntype", Promise)
 ], OrdersController.prototype, "close", null);
 exports.OrdersController = OrdersController = __decorate([
     (0, swagger_1.ApiTags)('orders'),
     (0, swagger_1.ApiBearerAuth)(),
-    (0, common_1.UseGuards)(jwt_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard) // TenantContextGuard já está global
+    (0, common_1.UseGuards)(jwt_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard) // TenantContext guard global já ativo
     ,
     (0, common_1.Controller)('tenants/:tenantId/orders'),
     __metadata("design:paramtypes", [orders_service_1.OrdersService])

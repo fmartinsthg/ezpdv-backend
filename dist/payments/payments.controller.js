@@ -21,9 +21,8 @@ const refund_payment_dto_1 = require("./dto/refund-payment.dto");
 const cancel_payment_dto_1 = require("./dto/cancel-payment.dto");
 const query_payments_dto_1 = require("./dto/query-payments.dto");
 const jwt_guard_1 = require("../auth/jwt.guard");
-const roles_guard_1 = require("../auth/roles.guard");
-const roles_decorator_1 = require("../auth/roles.decorator");
-const client_1 = require("@prisma/client");
+const roles_guard_1 = require("../common/guards/roles.guard");
+const roles_decorator_1 = require("../common/decorators/roles.decorator");
 const current_user_decorator_1 = require("../auth/current-user.decorator");
 const tenant_decorator_1 = require("../common/tenant/tenant.decorator");
 const payments_approval_guard_1 = require("./payments.approval.guard");
@@ -33,7 +32,6 @@ let PaymentsController = class PaymentsController {
         this.payments = payments;
     }
     async createAndCapture(tenantId, orderId, dto, user) {
-        // Alguns tokens expõem `sub`, outros `id`; padroniza aqui
         const actorId = user?.id ?? user?.sub;
         if (!actorId) {
             throw new common_1.BadRequestException('Invalid authenticated user (missing id/sub).');
@@ -65,7 +63,7 @@ let PaymentsController = class PaymentsController {
 exports.PaymentsController = PaymentsController;
 __decorate([
     (0, common_1.Post)('tenants/:tenantId/orders/:orderId/payments'),
-    (0, roles_decorator_1.Roles)(client_1.SystemRole.SUPERADMIN, client_1.TenantRole.ADMIN, client_1.TenantRole.MODERATOR, client_1.TenantRole.USER),
+    (0, roles_decorator_1.Roles)('SUPERADMIN', 'ADMIN', 'MODERATOR', 'USER'),
     (0, common_1.HttpCode)(201),
     (0, idempotency_decorator_1.Idempotent)('payments:capture'),
     (0, swagger_1.ApiOperation)({ summary: 'Captura de pagamento para uma ordem CLOSED (split-friendly)' }),
@@ -85,7 +83,7 @@ __decorate([
 ], PaymentsController.prototype, "createAndCapture", null);
 __decorate([
     (0, common_1.Get)('tenants/:tenantId/orders/:orderId/payments'),
-    (0, roles_decorator_1.Roles)(client_1.SystemRole.SUPERADMIN, client_1.TenantRole.ADMIN, client_1.TenantRole.MODERATOR, client_1.TenantRole.USER),
+    (0, roles_decorator_1.Roles)('SUPERADMIN', 'ADMIN', 'MODERATOR', 'USER'),
     (0, swagger_1.ApiOperation)({ summary: 'Lista pagamentos de uma ordem' }),
     __param(0, (0, tenant_decorator_1.TenantId)()),
     __param(1, (0, common_1.Param)('orderId', new common_1.ParseUUIDPipe())),
@@ -95,7 +93,7 @@ __decorate([
 ], PaymentsController.prototype, "listByOrder", null);
 __decorate([
     (0, common_1.Get)('tenants/:tenantId/payments'),
-    (0, roles_decorator_1.Roles)(client_1.SystemRole.SUPERADMIN, client_1.TenantRole.ADMIN, client_1.TenantRole.MODERATOR),
+    (0, roles_decorator_1.Roles)('SUPERADMIN', 'ADMIN', 'MODERATOR'),
     (0, swagger_1.ApiOperation)({ summary: 'Lista pagamentos do tenant (filtros + paginação)' }),
     __param(0, (0, tenant_decorator_1.TenantId)()),
     __param(1, (0, common_1.Query)()),
@@ -105,7 +103,7 @@ __decorate([
 ], PaymentsController.prototype, "listByTenant", null);
 __decorate([
     (0, common_1.Post)('tenants/:tenantId/payments/:paymentId/refund'),
-    (0, roles_decorator_1.Roles)(client_1.SystemRole.SUPERADMIN, client_1.TenantRole.ADMIN, client_1.TenantRole.MODERATOR),
+    (0, roles_decorator_1.Roles)('SUPERADMIN', 'ADMIN', 'MODERATOR'),
     (0, common_1.UseGuards)(payments_approval_guard_1.PaymentsApprovalGuard),
     (0, idempotency_decorator_1.Idempotent)('payments:refund'),
     (0, swagger_1.ApiOperation)({ summary: 'Estorno total/parcial de um pagamento CAPTURED' }),
@@ -123,7 +121,7 @@ __decorate([
 ], PaymentsController.prototype, "refund", null);
 __decorate([
     (0, common_1.Post)('tenants/:tenantId/payments/:paymentId/cancel'),
-    (0, roles_decorator_1.Roles)(client_1.SystemRole.SUPERADMIN, client_1.TenantRole.ADMIN, client_1.TenantRole.MODERATOR),
+    (0, roles_decorator_1.Roles)('SUPERADMIN', 'ADMIN', 'MODERATOR'),
     (0, common_1.UseGuards)(payments_approval_guard_1.PaymentsApprovalGuard),
     (0, idempotency_decorator_1.Idempotent)('payments:cancel'),
     (0, swagger_1.ApiOperation)({ summary: 'Cancelamento de um pagamento PENDING' }),

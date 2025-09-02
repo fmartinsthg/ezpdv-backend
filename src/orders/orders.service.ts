@@ -4,23 +4,24 @@ import {
   NotFoundException,
   ForbiddenException,
   ConflictException,
-} from '@nestjs/common';
+  PreconditionFailedException, // 412
+} from "@nestjs/common";
 import {
   Prisma,
   PrismaClient,
   OrderStatus,
   OrderItemStatus,
   StockMovementType,
-} from '@prisma/client';
-import { PrismaService } from '../prisma/prisma.service';
-import { CreateOrderDto } from './dto/create-order.dto';
-import { OrdersQueryDto } from './dto/orders-query.dto';
-import { AppendItemsDto } from './dto/append-items.dto';
-import { FireDto } from './dto/fire.dto';
-import { VoidItemDto } from './dto/void-item.dto';
-import { CloseOrderDto } from './dto/close-order.dto';
-import { AuthUser } from '../auth/jwt.strategy';
-import { JwtService } from '@nestjs/jwt';
+} from "@prisma/client";
+import { PrismaService } from "../prisma/prisma.service";
+import { CreateOrderDto } from "./dto/create-order.dto";
+import { OrdersQueryDto } from "./dto/orders-query.dto";
+import { AppendItemsDto } from "./dto/append-items.dto";
+import { FireDto } from "./dto/fire.dto";
+import { VoidItemDto } from "./dto/void-item.dto";
+import { CloseOrderDto } from "./dto/close-order.dto";
+import { AuthUser } from "../auth/jwt.strategy";
+import { JwtService } from "@nestjs/jwt";
 
 const MAX_RETRIES = 3;
 type DbLike = Prisma.TransactionClient | PrismaClient;
@@ -29,14 +30,50 @@ type DbLike = Prisma.TransactionClient | PrismaClient;
 export class OrdersService {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly jwtService: JwtService,
+    private readonly jwtService: JwtService
   ) {}
 
-  /* -------------------------- Helpers -------------------------- */
+  /* -------------------------- If-Match helpers -------------------------- */
 
-  private toDecimal(n: number | string | undefined, fallback = 0): Prisma.Decimal {
+  /** Aceita 5, "5", W/"5". Retorna número inteiro ou null se não enviado. */
+  private parseIfMatch(ifMatch?: string): number | null {
+    if (!ifMatch) return null;
+    const cleaned = String(ifMatch)
+      .trim()
+      .replace(/^W\/"?/, "")
+      .replace(/"$/, "");
+    const n = Number(cleaned);
+    return Number.isFinite(n) ? Math.trunc(n) : null;
+  }
+
+  /** Confere If-Match com a versão atual da ordem. Lança 412 se divergir. */
+  private async assertIfMatch(
+    tenantId: string,
+    orderId: string,
+    ifMatch?: string
+  ) {
+    const expected = this.parseIfMatch(ifMatch);
+    if (expected == null) return; // header não enviado -> não valida
+    const row = await this.prisma.order.findFirst({
+      where: { id: orderId, tenantId },
+      select: { version: true },
+    });
+    if (!row) throw new NotFoundException("Comanda não encontrada.");
+    if (row.version !== expected) {
+      throw new PreconditionFailedException(
+        `If-Match falhou: versão atual é ${row.version}, esperada ${expected}.`
+      );
+    }
+  }
+
+  /* -------------------------- Utils -------------------------- */
+
+  private toDecimal(
+    n: number | string | undefined,
+    fallback = 0
+  ): Prisma.Decimal {
     if (n === undefined || n === null) return new Prisma.Decimal(fallback);
-    return new Prisma.Decimal(typeof n === 'string' ? n : n.toString());
+    return new Prisma.Decimal(typeof n === "string" ? n : n.toString());
   }
 
   private async loadProductsMap(tenantId: string, productIds: string[]) {
@@ -44,22 +81,21 @@ export class OrdersService {
       where: { tenantId, id: { in: productIds } },
       select: { id: true, price: true, isActive: true },
     });
-    const map = new Map(products.map((p) => [p.id, p]));
-    return map;
+    return new Map(products.map((p) => [p.id, p]));
   }
 
   private async assertOrderInTenant(tenantId: string, id: string) {
     const order = await this.prisma.order.findFirst({
       where: { id, tenantId },
     });
-    if (!order) throw new NotFoundException('Comanda não encontrada.');
+    if (!order) throw new NotFoundException("Comanda não encontrada.");
     return order;
   }
 
   private async computeRequiredInventory(
     tenantId: string,
     items: { productId: string; quantity: Prisma.Decimal }[],
-    tx: DbLike,
+    tx: DbLike
   ) {
     const productIds = Array.from(new Set(items.map((i) => i.productId)));
     const recipes = await tx.recipe.findMany({
@@ -79,13 +115,13 @@ export class OrdersService {
       }
     }
 
-    return required; // Map<inventoryItemId, qty>
+    return required;
   }
 
   private async checkAndDebitInventorySerializable(
     tenantId: string,
     orderId: string,
-    required: Map<string, Prisma.Decimal>,
+    required: Map<string, Prisma.Decimal>
   ) {
     let attempt = 0;
     while (true) {
@@ -103,7 +139,9 @@ export class OrdersService {
             for (const inv of items) {
               const need = required.get(inv.id) || this.toDecimal(0);
               if (new Prisma.Decimal(inv.onHand).lt(need)) {
-                throw new ConflictException('Estoque insuficiente para produção.');
+                throw new ConflictException(
+                  "Estoque insuficiente para produção."
+                );
               }
             }
 
@@ -125,15 +163,18 @@ export class OrdersService {
                   type: StockMovementType.SALE,
                   qtyDelta: need.negated(),
                   relatedOrderId: orderId,
-                  reason: 'ORDER_ITEM_FIRE',
+                  reason: "ORDER_ITEM_FIRE",
                 },
               });
             }
           },
-          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
         );
       } catch (e: any) {
-        if (e?.code === 'P2034' || String(e?.message || '').includes('could not serialize access')) {
+        if (
+          e?.code === "P2034" ||
+          String(e?.message || "").includes("could not serialize access")
+        ) {
           if (++attempt >= MAX_RETRIES) throw e;
           await new Promise((r) => setTimeout(r, 50 * attempt));
           continue;
@@ -146,7 +187,7 @@ export class OrdersService {
   private async creditInventorySerializable(
     tenantId: string,
     orderId: string,
-    toCredit: Map<string, Prisma.Decimal>,
+    toCredit: Map<string, Prisma.Decimal>
   ) {
     let attempt = 0;
     while (true) {
@@ -179,16 +220,20 @@ export class OrdersService {
                   type: StockMovementType.ADJUSTMENT,
                   qtyDelta: qty,
                   relatedOrderId: orderId,
-                  reason: 'ORDER_ITEM_VOID_OR_CANCEL',
+                  reason: "ORDER_ITEM_VOID_OR_CANCEL",
                 },
               });
             }
           },
-          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
         );
       } catch (e: any) {
-        if (e?.code === 'P2034' || String(e?.message || '').includes('could not serialize access')) {
-          if (++attempt >= MAX_RETRIES) throw e;
+        // Re-tentativa em caso de serialization failure
+        if (
+          e?.code === "P2034" ||
+          String(e?.message || "").includes("could not serialize access")
+        ) {
+          if (++attempt >= 3) throw e;
           await new Promise((r) => setTimeout(r, 50 * attempt));
           continue;
         }
@@ -197,11 +242,11 @@ export class OrdersService {
     }
   }
 
-  /** Recalcula subtotal/total (exclui itens VOID). Aceita PrismaClient ou TransactionClient. */
+  /** Recalcula subtotal/total e incrementa a versão. */
   private async recomputeOrderTotals(
     tenantId: string,
     orderId: string,
-    db?: DbLike,
+    db?: DbLike
   ) {
     const client = (db ?? this.prisma) as DbLike;
 
@@ -209,19 +254,25 @@ export class OrdersService {
       where: {
         tenantId,
         orderId,
-        status: { in: [OrderItemStatus.STAGED, OrderItemStatus.FIRED, OrderItemStatus.CLOSED] },
+        status: {
+          in: [
+            OrderItemStatus.STAGED,
+            OrderItemStatus.FIRED,
+            OrderItemStatus.CLOSED,
+          ],
+        },
       },
       _sum: { total: true },
     });
 
     const subtotal = new Prisma.Decimal(sums._sum.total || 0);
-    const total = subtotal; // sem discount em Orders
+    const total = subtotal;
 
     await client.order.update({
       where: { id: orderId },
       data: {
         subtotal,
-        discount: new Prisma.Decimal(0), // manter consistente se a coluna existir
+        discount: new Prisma.Decimal(0),
         total,
         version: { increment: 1 },
       },
@@ -230,7 +281,12 @@ export class OrdersService {
 
   /* -------------------------- Use cases -------------------------- */
 
-  async create(tenantId: string, user: AuthUser, dto: CreateOrderDto, idempotencyKey?: string) {
+  async create(
+    tenantId: string,
+    user: AuthUser,
+    dto: CreateOrderDto,
+    idempotencyKey?: string
+  ) {
     if (idempotencyKey) {
       const existing = await this.prisma.order.findFirst({
         where: { tenantId, idempotencyKey },
@@ -242,17 +298,17 @@ export class OrdersService {
     const prodIds = Array.from(new Set(dto.items.map((i) => i.productId)));
     const prodMap = await this.loadProductsMap(tenantId, prodIds);
     if (prodMap.size !== prodIds.length) {
-      throw new NotFoundException('Produto(s) não encontrado(s) no tenant.');
+      throw new NotFoundException("Produto(s) não encontrado(s) no tenant.");
     }
 
     let subtotal = new Prisma.Decimal(0);
     const itemsData = dto.items.map((it) => {
       const p = prodMap.get(it.productId)!;
-      if (!p.isActive) {
-        throw new BadRequestException('Produto inativo.');
-      }
+      if (!p.isActive) throw new BadRequestException("Produto inativo.");
       const unitPrice =
-        it.unitPrice !== undefined ? this.toDecimal(it.unitPrice) : new Prisma.Decimal(p.price);
+        it.unitPrice !== undefined
+          ? this.toDecimal(it.unitPrice)
+          : new Prisma.Decimal(p.price);
       const qty = new Prisma.Decimal(it.quantity);
       const totalItem = unitPrice.times(qty);
       subtotal = subtotal.plus(totalItem);
@@ -283,29 +339,29 @@ export class OrdersService {
           assignedToUserId: user.userId,
           items: { create: itemsData as any },
         },
-        include: {
-          items: true,
-        },
+        include: { items: true },
       });
 
       return order;
     } catch (err: any) {
-      if (err?.code === 'P2002') {
-        const target = String(err?.meta?.target || '');
-        if (target.includes('tenantId_idempotencyKey')) {
+      if (err?.code === "P2002") {
+        const target = String(err?.meta?.target || "");
+        if (target.includes("tenantId_idempotencyKey")) {
           const existing = await this.prisma.order.findFirst({
             where: { tenantId, idempotencyKey },
             include: { items: true },
           });
           if (existing) return existing;
         }
-        throw new BadRequestException('Violação de unicidade.');
+        throw new BadRequestException("Violação de unicidade.");
       }
-      if (err?.code === 'P2003') {
-        throw new BadRequestException('Relacionamento inválido (FK). Verifique IDs informados.');
+      if (err?.code === "P2003") {
+        throw new BadRequestException(
+          "Relacionamento inválido (FK). Verifique IDs informados."
+        );
       }
-      if (err?.code === '22P02') {
-        throw new BadRequestException('IDs devem ser UUID válidos.');
+      if (err?.code === "22P02") {
+        throw new BadRequestException("IDs devem ser UUID válidos.");
       }
       throw err;
     }
@@ -319,15 +375,14 @@ export class OrdersService {
 
     const where: Prisma.OrderWhereInput = { tenantId };
     if (status) where.status = status;
-    if (q) where.tabNumber = { contains: q, mode: 'insensitive' };
-    if (String(mine).toLowerCase() === 'true') {
+    if (q) where.tabNumber = { contains: q, mode: "insensitive" };
+    if (String(mine).toLowerCase() === "true")
       where.assignedToUserId = user.userId;
-    }
 
     const [items, total] = await Promise.all([
       this.prisma.order.findMany({
         where,
-        orderBy: { createdAt: 'desc' },
+        orderBy: { createdAt: "desc" },
         skip,
         take,
         select: {
@@ -354,36 +409,51 @@ export class OrdersService {
     };
   }
 
-  async findOne(tenantId: string, id: string) {
+  async findOne(
+    tenantId: string,
+    id: string,
+    opts?: { includePayments?: boolean }
+  ) {
     const order = await this.prisma.order.findFirst({
       where: { id, tenantId },
       include: {
         items: true,
+        ...(opts?.includePayments ? { payments: true } : {}),
       },
     });
-    if (!order) throw new NotFoundException('Comanda não encontrada.');
+    if (!order) throw new NotFoundException("Comanda não encontrada.");
     return order;
   }
 
-  async appendItems(tenantId: string, user: AuthUser, orderId: string, dto: AppendItemsDto) {
+  async appendItems(
+    tenantId: string,
+    user: AuthUser,
+    orderId: string,
+    dto: AppendItemsDto,
+    ifMatch?: string
+  ) {
+    await this.assertIfMatch(tenantId, orderId, ifMatch);
+
     const order = await this.assertOrderInTenant(tenantId, orderId);
     if (order.status !== OrderStatus.OPEN) {
-      throw new BadRequestException('Somente comandas OPEN podem receber novos itens.');
+      throw new BadRequestException(
+        "Somente comandas OPEN podem receber novos itens."
+      );
     }
 
     const prodIds = Array.from(new Set(dto.items.map((i) => i.productId)));
     const prodMap = await this.loadProductsMap(tenantId, prodIds);
     if (prodMap.size !== prodIds.length) {
-      throw new NotFoundException('Produto(s) não encontrado(s) no tenant.');
+      throw new NotFoundException("Produto(s) não encontrado(s) no tenant.");
     }
 
     const itemsData = dto.items.map((it) => {
       const p = prodMap.get(it.productId)!;
-      if (!p.isActive) {
-        throw new BadRequestException('Produto inativo.');
-      }
+      if (!p.isActive) throw new BadRequestException("Produto inativo.");
       const unitPrice =
-        it.unitPrice !== undefined ? this.toDecimal(it.unitPrice) : new Prisma.Decimal(p.price);
+        it.unitPrice !== undefined
+          ? this.toDecimal(it.unitPrice)
+          : new Prisma.Decimal(p.price);
       const qty = new Prisma.Decimal(it.quantity);
       const totalItem = unitPrice.times(qty);
       return {
@@ -405,7 +475,13 @@ export class OrdersService {
         where: {
           orderId,
           tenantId,
-          status: { in: [OrderItemStatus.STAGED, OrderItemStatus.FIRED, OrderItemStatus.CLOSED] },
+          status: {
+            in: [
+              OrderItemStatus.STAGED,
+              OrderItemStatus.FIRED,
+              OrderItemStatus.CLOSED,
+            ],
+          },
         },
         _sum: { total: true },
       });
@@ -428,10 +504,20 @@ export class OrdersService {
     return this.findOne(tenantId, orderId);
   }
 
-  async fireItems(tenantId: string, user: AuthUser, orderId: string, dto: FireDto) {
+  async fireItems(
+    tenantId: string,
+    user: AuthUser,
+    orderId: string,
+    dto: FireDto,
+    ifMatch?: string
+  ) {
+    await this.assertIfMatch(tenantId, orderId, ifMatch);
+
     const order = await this.assertOrderInTenant(tenantId, orderId);
     if (order.status !== OrderStatus.OPEN) {
-      throw new BadRequestException('Apenas comandas OPEN podem disparar itens.');
+      throw new BadRequestException(
+        "Apenas comandas OPEN podem disparar itens."
+      );
     }
 
     const whereItems: Prisma.OrderItemWhereInput = {
@@ -456,7 +542,7 @@ export class OrdersService {
         productId: s.productId,
         quantity: new Prisma.Decimal(s.quantity),
       })),
-      this.prisma,
+      this.prisma
     );
 
     await this.checkAndDebitInventorySerializable(tenantId, orderId, required);
@@ -481,43 +567,55 @@ export class OrdersService {
     itemId: string,
     dto: VoidItemDto,
     approvalToken: string,
+    ifMatch?: string
   ) {
-    // Valida aprovação
+    await this.assertIfMatch(tenantId, orderId, ifMatch);
+
+    // valida aprovação (inalterado)
     let approver: any;
     try {
-      const tokenStr = (approvalToken || '').replace(/^Bearer\s+/i, '');
+      const tokenStr = (approvalToken || "").replace(/^Bearer\s+/i, "");
       approver = this.jwtService.verify(tokenStr, {
-        secret: process.env.JWT_SECRET || 'ezpdv-secret',
+        secret: process.env.JWT_SECRET || "ezpdv-secret",
       });
     } catch {
-      throw new ForbiddenException('Token de aprovação inválido.');
+      throw new ForbiddenException("Token de aprovação inválido.");
     }
-
     const approverRoles = new Set<string>();
-    if (approver?.systemRole) approverRoles.add(String(approver.systemRole).toUpperCase());
+    if (approver?.systemRole)
+      approverRoles.add(String(approver.systemRole).toUpperCase());
     if (approver?.role) approverRoles.add(String(approver.role).toUpperCase());
-    if (!['SUPERADMIN', 'ADMIN', 'MODERATOR'].some((r) => approverRoles.has(r))) {
-      throw new ForbiddenException('Aprovação requer MODERATOR/ADMIN/SUPERADMIN.');
+    if (
+      !["SUPERADMIN", "ADMIN", "MODERATOR"].some((r) => approverRoles.has(r))
+    ) {
+      throw new ForbiddenException(
+        "Aprovação requer MODERATOR/ADMIN/SUPERADMIN."
+      );
     }
 
     const item = await this.prisma.orderItem.findFirst({
       where: { id: itemId, orderId, tenantId },
       select: { id: true, status: true, productId: true, quantity: true },
     });
-    if (!item) throw new NotFoundException('Item não encontrado.');
+    if (!item) throw new NotFoundException("Item não encontrado.");
     if (item.status !== OrderItemStatus.FIRED) {
-      throw new BadRequestException('Somente itens FIRED podem ser anulados (VOID).');
+      throw new BadRequestException(
+        "Somente itens FIRED podem ser anulados (VOID)."
+      );
     }
 
-    // Credita estoque
     const toCredit = await this.computeRequiredInventory(
       tenantId,
-      [{ productId: item.productId, quantity: new Prisma.Decimal(item.quantity) }],
-      this.prisma,
+      [
+        {
+          productId: item.productId,
+          quantity: new Prisma.Decimal(item.quantity),
+        },
+      ],
+      this.prisma
     );
     await this.creditInventorySerializable(tenantId, orderId, toCredit);
 
-    // VOID + recálculo de totais na mesma transação
     await this.prisma.$transaction(async (tx) => {
       await tx.orderItem.update({
         where: { id: item.id },
@@ -536,10 +634,19 @@ export class OrdersService {
     return this.findOne(tenantId, orderId);
   }
 
-  async cancel(tenantId: string, _user: AuthUser, orderId: string) {
+  async cancel(
+    tenantId: string,
+    _user: AuthUser,
+    orderId: string,
+    ifMatch?: string
+  ) {
+    await this.assertIfMatch(tenantId, orderId, ifMatch);
+
     const order = await this.assertOrderInTenant(tenantId, orderId);
     if (order.status !== OrderStatus.OPEN) {
-      throw new BadRequestException('Somente comandas OPEN podem ser canceladas.');
+      throw new BadRequestException(
+        "Somente comandas OPEN podem ser canceladas."
+      );
     }
 
     const activeCount = await this.prisma.orderItem.count({
@@ -551,7 +658,7 @@ export class OrdersService {
     });
     if (activeCount > 0) {
       throw new BadRequestException(
-        'Remova itens STAGED e faça VOID dos FIRED antes de cancelar a comanda.',
+        "Remova itens STAGED e faça VOID dos FIRED antes de cancelar a comanda."
       );
     }
 
@@ -572,17 +679,29 @@ export class OrdersService {
     return updated!;
   }
 
-  async close(tenantId: string, _user: AuthUser, orderId: string, _dto: CloseOrderDto) {
+  async close(
+    tenantId: string,
+    _user: AuthUser,
+    orderId: string,
+    _dto: CloseOrderDto,
+    ifMatch?: string
+  ) {
+    await this.assertIfMatch(tenantId, orderId, ifMatch);
+
     const order = await this.assertOrderInTenant(tenantId, orderId);
     if (order.status !== OrderStatus.OPEN) {
-      throw new BadRequestException('Somente comandas OPEN podem ser fechadas.');
+      throw new BadRequestException(
+        "Somente comandas OPEN podem ser fechadas."
+      );
     }
 
     const staged = await this.prisma.orderItem.count({
       where: { tenantId, orderId, status: OrderItemStatus.STAGED },
     });
     if (staged > 0) {
-      throw new BadRequestException('Há itens STAGED. Remova-os ou faça FIRE antes de fechar.');
+      throw new BadRequestException(
+        "Há itens STAGED. Remova-os ou faça FIRE antes de fechar."
+      );
     }
 
     const result = await this.prisma.$transaction(async (tx) => {

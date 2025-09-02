@@ -3,7 +3,6 @@ import {
   Body,
   Controller,
   Get,
-  Headers,
   HttpCode,
   Param,
   ParseUUIDPipe,
@@ -27,9 +26,8 @@ import { CancelPaymentDto } from './dto/cancel-payment.dto';
 import { QueryPaymentsDto } from './dto/query-payments.dto';
 
 import { JwtAuthGuard } from '../auth/jwt.guard';
-import { RolesGuard } from '../auth/roles.guard';
-import { Roles } from '../auth/roles.decorator';
-import { SystemRole, TenantRole } from '@prisma/client';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { Roles } from '../common/decorators/roles.decorator';
 
 import { CurrentUser } from '../auth/current-user.decorator';
 import { AuthUser } from '../auth/jwt.strategy';
@@ -46,7 +44,7 @@ export class PaymentsController {
   constructor(private readonly payments: PaymentsService) {}
 
   @Post('tenants/:tenantId/orders/:orderId/payments')
-  @Roles(SystemRole.SUPERADMIN, TenantRole.ADMIN, TenantRole.MODERATOR, TenantRole.USER)
+  @Roles('SUPERADMIN', 'ADMIN', 'MODERATOR', 'USER')
   @HttpCode(201)
   @Idempotent('payments:capture')
   @ApiOperation({ summary: 'Captura de pagamento para uma ordem CLOSED (split-friendly)' })
@@ -62,7 +60,6 @@ export class PaymentsController {
     @Body() dto: CreatePaymentDto,
     @CurrentUser() user: AuthUser,
   ) {
-    // Alguns tokens expõem `sub`, outros `id`; padroniza aqui
     const actorId = (user as any)?.id ?? (user as any)?.sub;
     if (!actorId) {
       throw new BadRequestException('Invalid authenticated user (missing id/sub).');
@@ -72,7 +69,7 @@ export class PaymentsController {
   }
 
   @Get('tenants/:tenantId/orders/:orderId/payments')
-  @Roles(SystemRole.SUPERADMIN, TenantRole.ADMIN, TenantRole.MODERATOR, TenantRole.USER)
+  @Roles('SUPERADMIN', 'ADMIN', 'MODERATOR', 'USER')
   @ApiOperation({ summary: 'Lista pagamentos de uma ordem' })
   async listByOrder(
     @TenantId() tenantId: string,
@@ -82,7 +79,7 @@ export class PaymentsController {
   }
 
   @Get('tenants/:tenantId/payments')
-  @Roles(SystemRole.SUPERADMIN, TenantRole.ADMIN, TenantRole.MODERATOR)
+  @Roles('SUPERADMIN', 'ADMIN', 'MODERATOR')
   @ApiOperation({ summary: 'Lista pagamentos do tenant (filtros + paginação)' })
   async listByTenant(
     @TenantId() tenantId: string,
@@ -92,7 +89,7 @@ export class PaymentsController {
   }
 
   @Post('tenants/:tenantId/payments/:paymentId/refund')
-  @Roles(SystemRole.SUPERADMIN, TenantRole.ADMIN, TenantRole.MODERATOR)
+  @Roles('SUPERADMIN', 'ADMIN', 'MODERATOR')
   @UseGuards(PaymentsApprovalGuard)
   @Idempotent('payments:refund')
   @ApiOperation({ summary: 'Estorno total/parcial de um pagamento CAPTURED' })
@@ -114,7 +111,7 @@ export class PaymentsController {
   }
 
   @Post('tenants/:tenantId/payments/:paymentId/cancel')
-  @Roles(SystemRole.SUPERADMIN, TenantRole.ADMIN, TenantRole.MODERATOR)
+  @Roles('SUPERADMIN', 'ADMIN', 'MODERATOR')
   @UseGuards(PaymentsApprovalGuard)
   @Idempotent('payments:cancel')
   @ApiOperation({ summary: 'Cancelamento de um pagamento PENDING' })
