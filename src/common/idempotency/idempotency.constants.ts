@@ -26,4 +26,7 @@ export const IDEMPOTENCY_ALLOWED_SCOPES = new Set<string>([
   'payments:intent:create',
   'payments:authorize',
   'payments:pix:create',
+  // Webhooks
+  'webhooks:endpoints:create',
+  'webhooks:replay',
 ]);

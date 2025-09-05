@@ -6,21 +6,18 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.OrdersModule = void 0;
+exports.WebhooksModule = void 0;
+// src/webhooks/webhooks.module.ts
 const common_1 = require("@nestjs/common");
-const orders_controller_1 = require("./orders.controller");
-const orders_service_1 = require("./orders.service");
 const prisma_module_1 = require("../prisma/prisma.module");
-const auth_module_1 = require("../auth/auth.module");
-const webhooks_module_1 = require("../webhooks/webhooks.module");
-let OrdersModule = class OrdersModule {
+const webhooks_service_1 = require("./webhooks.service");
+let WebhooksModule = class WebhooksModule {
 };
-exports.OrdersModule = OrdersModule;
-exports.OrdersModule = OrdersModule = __decorate([
+exports.WebhooksModule = WebhooksModule;
+exports.WebhooksModule = WebhooksModule = __decorate([
     (0, common_1.Module)({
-        imports: [prisma_module_1.PrismaModule, auth_module_1.AuthModule, webhooks_module_1.WebhooksModule],
-        controllers: [orders_controller_1.OrdersController],
-        providers: [orders_service_1.OrdersService],
-        exports: [orders_service_1.OrdersService],
+        imports: [prisma_module_1.PrismaModule],
+        providers: [webhooks_service_1.WebhooksService],
+        exports: [webhooks_service_1.WebhooksService],
     })
-], OrdersModule);
+], WebhooksModule);

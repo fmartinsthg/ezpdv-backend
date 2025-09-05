@@ -6,20 +6,21 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
     return c > 3 && r && Object.defineProperty(target, key, r), r;
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.PrismaService = void 0;
+exports.EtagInterceptor = void 0;
 const common_1 = require("@nestjs/common");
-const client_1 = require("@prisma/client");
-const tenant_middleware_1 = require("./tenant.middleware");
-let PrismaService = class PrismaService extends client_1.PrismaClient {
-    async onModuleInit() {
-        this.$use?.((0, tenant_middleware_1.enforceTenantGuard)());
-        await this.$connect();
-    }
-    async onModuleDestroy() {
-        await this.$disconnect();
+const operators_1 = require("rxjs/operators");
+let EtagInterceptor = class EtagInterceptor {
+    intercept(ctx, next) {
+        const res = ctx.switchToHttp().getResponse();
+        return next.handle().pipe((0, operators_1.tap)((body) => {
+            const v = (body?.version ?? body?.order?.version ?? null);
+            if (Number.isInteger(v)) {
+                res.setHeader('ETag', `W/"${v}"`);
+            }
+        }));
     }
 };
-exports.PrismaService = PrismaService;
-exports.PrismaService = PrismaService = __decorate([
+exports.EtagInterceptor = EtagInterceptor;
+exports.EtagInterceptor = EtagInterceptor = __decorate([
     (0, common_1.Injectable)()
-], PrismaService);
+], EtagInterceptor);

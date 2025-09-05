@@ -14,14 +14,14 @@ datasource db {
 // Papel GLOBAL, para administração da plataforma
 enum SystemRole {
   SUPERADMIN // pode criar/editar tenants e gerenciar contas
-  SUPPORT // opcional, suporte limitado
-  NONE // padrão para usuários comuns
+  SUPPORT    // opcional, suporte limitado
+  NONE       // padrão para usuários comuns
 }
 
 enum TenantRole {
-  ADMIN // dono/administrador do restaurante
+  ADMIN     // dono/administrador do restaurante
   MODERATOR // gerente/financeiro
-  USER // atendente/garçom
+  USER      // atendente/garçom
 }
 
 enum OrderStatus {
@@ -34,7 +34,6 @@ enum OrderStatus {
  * Itens do pedido: ciclo de vida por item
  * STAGED (carrinho) -> FIRED (produzindo) -> CLOSED (fechar)| VOID (cancelar)
  */
-
 enum OrderItemStatus {
   STAGED
   FIRED
@@ -92,11 +91,6 @@ enum InventoryUnit {
   UNIT
 }
 
-/**
- * Mantemos seus tipos de movimento:
- * - FIRE: usar SALE com qtyDelta negativa
- * - VOID: usar ADJUSTMENT com qtyDelta positiva
- */
 enum StockMovementType {
   SALE
   PURCHASE
@@ -127,6 +121,13 @@ enum IdempotencyStatus {
   EXPIRED
 }
 
+enum WebhookDeliveryStatus {
+  PENDING
+  SENDING
+  SENT
+  FAILED
+}
+
 /**
  * ------------------------- Multi-tenant -------------------------
  */
@@ -152,10 +153,19 @@ model Tenant {
   recipes        Recipe[]
   stockMovements StockMovement[]
 
-  // 🔽 ADIÇÕES para fechar relações
+  // Pagamentos — entidades auxiliares
   paymentIntents  PaymentIntent[]
   paymentAttempts PaymentAttempt[]
   pixCharges      PixCharge[]
+
+  // 🔽 Back-relations para eventos/auditoria
+  orderEvents     OrderEvent[]
+  orderItemEvents OrderItemEvent[]
+
+  // Webhooks
+  webhookEndpoints  WebhookEndpoint[] @relation("TenantWebhookEndpoint")
+  webhookEvents     WebhookEvent[]    @relation("TenantWebhookEvent")
+  webhookDeliveries WebhookDelivery[]
 }
 
 model User {
@@ -177,7 +187,7 @@ model User {
   createdOrders  Order[] @relation("OrderCreatedByUser")
   assignedOrders Order[] @relation("OrderAssignedToUser")
 
-  // Atores de VOID
+  // Atores de VOID (itens do pedido)
   voidRequestedItems OrderItem[] @relation("VoidRequestedBy")
   voidApprovedItems  OrderItem[] @relation("VoidApprovedBy")
 
@@ -185,8 +195,12 @@ model User {
   createdPayments     Payment[]            @relation("UserCreatedPayments")
   paymentTransactions PaymentTransaction[] @relation("UserPaymentTransactions")
 
-  // 🔽 ADIÇÃO: intents criados por este usuário
+  // Intents criados por este usuário
   createdPaymentIntents PaymentIntent[] @relation("UserCreatedPaymentIntents")
+
+  // 🔽 Back-relations para eventos/auditoria
+  orderEvents     OrderEvent[]
+  orderItemEvents OrderItemEvent[]
 }
 
 model UserTenant {
@@ -304,22 +318,22 @@ model FinancialTransaction {
  */
 
 model IdempotencyKey {
-  id                String            @id @default(uuid())
-  tenantId          String
-  scope             String // ex.: "orders:create"
-  key               String // UUID v4 gerado pelo cliente
-  status            IdempotencyStatus @default(PROCESSING)
-  requestHash       String
-  responseCode      Int?
-  responseBody      Json?
-  responseTruncated Boolean           @default(false)
-  resourceType      String? // ex.: "order"
-  resourceId        String? // id do recurso principal
-  errorCode         String?
-  errorMessage      String?
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-  expiresAt         DateTime // TTL = now + 48h
+  id                 String            @id @default(uuid())
+  tenantId           String
+  scope              String // ex.: "orders:create"
+  key                String // UUID v4 gerado pelo cliente
+  status             IdempotencyStatus @default(PROCESSING)
+  requestHash        String
+  responseCode       Int?
+  responseBody       Json?
+  responseTruncated  Boolean           @default(false)
+  resourceType       String? // ex.: "order"
+  resourceId         String? // id do recurso principal
+  errorCode          String?
+  errorMessage       String?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+  expiresAt          DateTime // TTL = now + 48h
 
   @@unique([tenantId, scope, key])
   @@index([tenantId, scope, key])
@@ -350,7 +364,7 @@ model Order {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // ✅ NOVO: estado financeiro
+  // Estado financeiro
   isSettled Boolean   @default(false)
   paidAt    DateTime?
 
@@ -366,11 +380,13 @@ model Order {
   // intents associados a esta ordem
   paymentIntents PaymentIntent[]
 
+  // 🔽 Back-relations para eventos
+  events OrderEvent[]
+
   @@unique([tenantId, idempotencyKey])
   @@index([tenantId, status, createdAt])
-  @@index([tenantId, isSettled, createdAt]) // ✅ NOVO
+  @@index([tenantId, isSettled, createdAt])
 }
-
 
 model OrderItem {
   id        String @id @default(uuid())
@@ -401,6 +417,9 @@ model OrderItem {
   // Relações de auditoria de VOID
   voidByUser         User? @relation("VoidRequestedBy", fields: [voidByUserId], references: [id])
   voidApprovedByUser User? @relation("VoidApprovedBy", fields: [voidApprovedBy], references: [id])
+
+  // 🔽 Back-relations para eventos
+  events OrderItemEvent[]
 
   @@index([tenantId, orderId])
 }
@@ -433,13 +452,14 @@ model Payment {
   // relação com Intent
   intent PaymentIntent? @relation(fields: [paymentIntentId], references: [id])
 
-  // 🔽 ADIÇÃO: tentativas (ex.: autorizações, callbacks do PSP)
+  // Tentativas (ex.: autorizações, callbacks do PSP)
   attempts PaymentAttempt[] @relation("Payment_Attempts")
 
   transactions PaymentTransaction[]
 
   // De-dupe robusto por evento do PSP
   @@unique([tenantId, provider, providerTxnId])
+
   // Índices
   @@index([tenantId, orderId, createdAt])
   @@index([tenantId, status])
@@ -461,9 +481,7 @@ model PaymentIntent {
   order     Order  @relation(fields: [orderId], references: [id])
   createdBy User   @relation("UserCreatedPaymentIntents", fields: [createdByUserId], references: [id])
 
-  payments Payment[]
-
-  // 🔽 ADIÇÃO: cobranças PIX geradas para este intent
+  payments  Payment[]
   pixCharges PixCharge[] @relation("Intent_PixCharges")
 
   @@index([tenantId, orderId, status])
@@ -489,15 +507,65 @@ model PaymentAttempt {
   @@map("payment_attempts")
 }
 
-model WebhookEvent {
-  id          String    @id @default(uuid())
-  provider    String
-  eventId     String    @unique
-  payload     Json
-  receivedAt  DateTime  @default(now())
-  processedAt DateTime?
+model WebhookEndpoint {
+id        String   @id @default(uuid())
+  tenantId  String
+  url       String
+  secret    String
+  events    String[]
+  isActive  Boolean  @default(true)
+  version   Int      @default(0)         // <— para ETag/If-Match
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
+  tenant     Tenant           @relation("TenantWebhookEndpoint", fields: [tenantId], references: [id])
+  deliveries WebhookDelivery[]
+
+  @@index([tenantId, isActive])
+  @@map("webhook_endpoints")
+}
+
+model WebhookEvent {
+  id         String   @id @default(uuid())
+  tenantId   String
+  type       String
+  payload    Json
+  occurredAt DateTime
+  version    Int
+  createdAt  DateTime @default(now())
+
+  tenant     Tenant           @relation("TenantWebhookEvent", fields: [tenantId], references: [id])
+  deliveries WebhookDelivery[]
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, type, occurredAt])
   @@map("webhook_events")
+}
+
+model WebhookDelivery {
+  id             String                @id @default(uuid())
+  tenantId       String
+  eventId        String
+  endpointId     String
+  status         WebhookDeliveryStatus @default(PENDING)
+  attemptCount   Int                   @default(0)
+  lastError      String?
+  responseCode   Int?
+  responseTimeMs Int?
+  nextRetryAt    DateTime?
+  deliveredAt    DateTime?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  tenant   Tenant          @relation(fields: [tenantId], references: [id])
+  event    WebhookEvent    @relation(fields: [eventId], references: [id])
+  endpoint WebhookEndpoint @relation(fields: [endpointId], references: [id])
+
+  @@index([tenantId, status, nextRetryAt])
+  @@index([tenantId, createdAt, status])
+  @@index([tenantId, endpointId, status])
+  @@index([tenantId, eventId])
+  @@map("webhook_deliveries")
 }
 
 model PixCharge {
@@ -585,7 +653,7 @@ model StockMovement {
   type            StockMovementType
   qtyDelta        Decimal           @db.Decimal(10, 3) // negativo = saída (SALE/fire); positivo = entrada (ADJUSTMENT/void)
   relatedOrderId  String?
-  reason          String? // NEW: opcional para rastreabilidade
+  reason          String? // opcional para rastreabilidade
   createdAt       DateTime          @default(now())
 
   tenant        Tenant        @relation(fields: [tenantId], references: [id])
@@ -593,4 +661,44 @@ model StockMovement {
   order         Order?        @relation(fields: [relatedOrderId], references: [id])
 
   @@index([tenantId, inventoryItemId, createdAt])
+}
+
+/**
+ * ------------------------- Auditoria de Orders/Items -------------------------
+ */
+
+model OrderEvent {
+  id         String      @id @default(uuid())
+  tenantId   String
+  orderId    String
+  userId     String
+  eventType  String // e.g. CREATED, STATUS_CHANGE, CANCELED, CLOSED
+  fromStatus OrderStatus?
+  toStatus   OrderStatus?
+  reason     String?
+  createdAt  DateTime    @default(now())
+
+  order  Order  @relation(fields: [orderId], references: [id])
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([tenantId, orderId, createdAt])
+}
+
+model OrderItemEvent {
+  id          String           @id @default(uuid())
+  tenantId    String
+  orderItemId String
+  userId      String
+  eventType   String // e.g. CREATED, STATUS_CHANGE, VOID
+  fromStatus  OrderItemStatus?
+  toStatus    OrderItemStatus?
+  reason      String?
+  createdAt   DateTime         @default(now())
+
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id])
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@index([tenantId, orderItemId, createdAt])
 }

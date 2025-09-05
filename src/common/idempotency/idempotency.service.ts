@@ -2,18 +2,18 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
-} from '@nestjs/common';
-import { Prisma, IdempotencyStatus } from '@prisma/client';
-import { PrismaService } from '../../prisma/prisma.service';
+} from "@nestjs/common";
+import { Prisma, IdempotencyStatus } from "@prisma/client";
+import { PrismaService } from "../../prisma/prisma.service";
 import {
   IDEMPOTENCY_ALLOWED_SCOPES,
   IDEMPOTENCY_DEFAULTS,
-} from './idempotency.constants';
+} from "./idempotency.constants";
 
 export type BeginResult =
-  | { action: 'REPLAY'; responseCode: number; responseBody: any }
-  | { action: 'PROCEED'; recordId: string }
-  | { action: 'IN_PROGRESS' };
+  | { action: "REPLAY"; responseCode: number; responseBody: any }
+  | { action: "PROCEED"; recordId: string }
+  | { action: "IN_PROGRESS" };
 
 @Injectable()
 export class IdempotencyService {
@@ -25,23 +25,26 @@ export class IdempotencyService {
   /** Mapa de sinônimos → escopo CANÔNICO */
   private readonly scopeMap: Record<string, string> = {
     // Orders
-    'orders:append-items': 'orders:append-items',
-    'orders:items:append': 'orders:append-items',
-    'orders:void-item': 'orders:void-item',
-    'orders:items:void': 'orders:void-item',
-    'orders:fire': 'orders:fire',
-    'orders:cancel': 'orders:cancel',
-    'orders:close': 'orders:close',
-    'orders:create': 'orders:create',
+    "orders:append-items": "orders:append-items",
+    "orders:items:append": "orders:append-items",
+    "orders:void-item": "orders:void-item",
+    "orders:items:void": "orders:void-item",
+    "orders:fire": "orders:fire",
+    "orders:cancel": "orders:cancel",
+    "orders:close": "orders:close",
+    "orders:create": "orders:create",
     // Payments
-    'payments:capture': 'payments:capture',
-    'payments:refund': 'payments:refund',
-    'payments:cancel': 'payments:cancel',
+    "payments:capture": "payments:capture",
+    "payments:refund": "payments:refund",
+    "payments:cancel": "payments:cancel",
+    // Webhooks
+    "webhooks:create:endpoints": "webhooks:endpoints:create",
+    "webhooks:replay": "webhooks:replay",
   };
 
   /** Retorna a forma canônica do escopo (ou o próprio se não houver mapeamento). */
   public canonicalScope(input: string): string {
-    const s = (input || '').trim();
+    const s = (input || "").trim();
     return this.scopeMap[s] || s;
   }
 
@@ -54,28 +57,34 @@ export class IdempotencyService {
   public validateHeadersOrThrow(
     allowedFromHandler: string[] | string,
     scopeHeader?: string,
-    keyHeader?: string,
+    keyHeader?: string
   ) {
     const allowed = Array.isArray(allowedFromHandler)
       ? allowedFromHandler
       : [allowedFromHandler];
 
     if (!scopeHeader) {
-      throw new BadRequestException('Idempotency-Scope é obrigatório.');
+      throw new BadRequestException("Idempotency-Scope é obrigatório.");
     }
     const canonicalHeader = this.canonicalScope(scopeHeader);
-    const canonicalAllowed = new Set(allowed.map((s) => this.canonicalScope(s)));
+    const canonicalAllowed = new Set(
+      allowed.map((s) => this.canonicalScope(s))
+    );
 
     if (!canonicalAllowed.has(canonicalHeader)) {
-      throw new BadRequestException('Escopo de idempotência não permitido para este endpoint.');
+      throw new BadRequestException(
+        "Escopo de idempotência não permitido para este endpoint."
+      );
     }
     // Checagem extra contra allowlist global (hardening)
     if (!IDEMPOTENCY_ALLOWED_SCOPES.has(canonicalHeader)) {
-      throw new BadRequestException('Escopo de idempotência não é suportado globalmente.');
+      throw new BadRequestException(
+        "Escopo de idempotência não é suportado globalmente."
+      );
     }
 
     if (!keyHeader) {
-      throw new BadRequestException('Idempotency-Key é obrigatório.');
+      throw new BadRequestException("Idempotency-Key é obrigatório.");
     }
   }
 
@@ -87,16 +96,16 @@ export class IdempotencyService {
     tenantId: string,
     scope: string,
     key: string,
-    requestHash: string,
+    requestHash: string
   ): Promise<BeginResult> {
     const canonical = this.canonicalScope(scope);
     if (!IDEMPOTENCY_ALLOWED_SCOPES.has(canonical)) {
-      throw new BadRequestException('Escopo de idempotência não permitido.');
+      throw new BadRequestException("Escopo de idempotência não permitido.");
     }
 
     const now = new Date();
     const expiresAt = new Date(
-      now.getTime() + IDEMPOTENCY_DEFAULTS.TTL_HOURS * 3600 * 1000,
+      now.getTime() + IDEMPOTENCY_DEFAULTS.TTL_HOURS * 3600 * 1000
     );
 
     // Caminho comum: primeira execução → cria registro em PROCESSING
@@ -112,9 +121,9 @@ export class IdempotencyService {
         },
         select: { id: true },
       });
-      return { action: 'PROCEED', recordId: created.id };
+      return { action: "PROCEED", recordId: created.id };
     } catch (e: any) {
-      if (e?.code !== 'P2002') throw e; // não é unique → propaga
+      if (e?.code !== "P2002") throw e; // não é unique → propaga
     }
 
     // Já existe (mesma chave no mesmo tenant/escopo)
@@ -135,11 +144,14 @@ export class IdempotencyService {
         },
         select: { id: true },
       });
-      return { action: 'PROCEED', recordId: created.id };
+      return { action: "PROCEED", recordId: created.id };
     }
 
     // Expirado → reabre janela
-    if (existing.expiresAt <= now || existing.status === IdempotencyStatus.EXPIRED) {
+    if (
+      existing.expiresAt <= now ||
+      existing.status === IdempotencyStatus.EXPIRED
+    ) {
       const updated = await this.prisma.idempotencyKey.update({
         where: { id: existing.id },
         data: {
@@ -154,16 +166,16 @@ export class IdempotencyService {
         },
         select: { id: true },
       });
-      return { action: 'PROCEED', recordId: updated.id };
+      return { action: "PROCEED", recordId: updated.id };
     }
 
     // SUCCEEDED → REPLAY (somente se payload idêntico)
     if (existing.status === IdempotencyStatus.SUCCEEDED) {
       if (existing.requestHash !== requestHash) {
-        throw new ConflictException('IDEMPOTENCY_PAYLOAD_MISMATCH');
+        throw new ConflictException("IDEMPOTENCY_PAYLOAD_MISMATCH");
       }
       return {
-        action: 'REPLAY',
+        action: "REPLAY",
         responseCode: existing.responseCode ?? 200,
         responseBody: existing.responseBody ?? {},
       };
@@ -182,11 +194,11 @@ export class IdempotencyService {
         },
         select: { id: true },
       });
-      return { action: 'PROCEED', recordId: updated.id };
+      return { action: "PROCEED", recordId: updated.id };
     }
 
     // PROCESSING → o Interceptor retornará 429/Retry-After
-    return { action: 'IN_PROGRESS' };
+    return { action: "IN_PROGRESS" };
   }
 
   /**
@@ -201,18 +213,18 @@ export class IdempotencyService {
       resourceType?: string;
       resourceId?: string;
       truncateAtBytes?: number;
-    },
+    }
   ) {
     const limit =
       options?.truncateAtBytes ?? IDEMPOTENCY_DEFAULTS.SNAPSHOT_MAX_BYTES;
 
-    let bodyToStore: Prisma.InputJsonValue =
-      (responseBody ?? {}) as Prisma.InputJsonValue;
+    let bodyToStore: Prisma.InputJsonValue = (responseBody ??
+      {}) as Prisma.InputJsonValue;
     let truncated = false;
 
     try {
       const raw = JSON.stringify(responseBody ?? {});
-      const bytes = Buffer.byteLength(raw, 'utf8');
+      const bytes = Buffer.byteLength(raw, "utf8");
       if (bytes > limit) {
         bodyToStore = {
           resourceId: options?.resourceId ?? null,
@@ -243,14 +255,18 @@ export class IdempotencyService {
   }
 
   /** Marca FAILED e persiste um erro curto (até 500 chars). */
-  public async fail(recordId: string, errorCode: string, errorMessage?: string) {
+  public async fail(
+    recordId: string,
+    errorCode: string,
+    errorMessage?: string
+  ) {
     try {
       await this.prisma.idempotencyKey.update({
         where: { id: recordId },
         data: {
           status: IdempotencyStatus.FAILED,
           errorCode,
-          errorMessage: (errorMessage ?? '').slice(0, 500) || null,
+          errorMessage: (errorMessage ?? "").slice(0, 500) || null,
         },
       });
     } catch {

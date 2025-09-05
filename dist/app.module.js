@@ -10,6 +10,7 @@ exports.AppModule = void 0;
 // src/app.module.ts
 const common_1 = require("@nestjs/common");
 const core_1 = require("@nestjs/core");
+const etag_interceptor_1 = require("./common/http/etag.interceptor");
 const config_1 = require("@nestjs/config");
 const app_controller_1 = require("./app.controller");
 const jwt_guard_1 = require("./auth/jwt.guard");
@@ -51,6 +52,7 @@ exports.AppModule = AppModule = __decorate([
             { provide: core_1.APP_GUARD, useClass: roles_guard_1.RolesGuard },
             { provide: core_1.APP_GUARD, useClass: tenant_1.TenantContextGuard },
             { provide: core_1.APP_INTERCEPTOR, useClass: tenant_1.TenantRouteValidationInterceptor },
+            { provide: core_1.APP_INTERCEPTOR, useClass: etag_interceptor_1.EtagInterceptor },
         ],
     })
 ], AppModule);

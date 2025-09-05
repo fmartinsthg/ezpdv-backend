@@ -1,6 +1,7 @@
 // src/app.module.ts
 import { Module } from "@nestjs/common";
 import { APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
+import { EtagInterceptor } from "./common/http/etag.interceptor";
 import { ConfigModule } from "@nestjs/config";
 import { AppController } from "./app.controller";
 import { JwtAuthGuard } from "./auth/jwt.guard";
@@ -42,6 +43,7 @@ import { PaymentIntentsModule } from "./payment-intents/payment-intents.module";
     { provide: APP_GUARD, useClass: RolesGuard },
     { provide: APP_GUARD, useClass: TenantContextGuard },
     { provide: APP_INTERCEPTOR, useClass: TenantRouteValidationInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: EtagInterceptor },
   ],
 })
 export class AppModule {}

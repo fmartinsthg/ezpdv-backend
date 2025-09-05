@@ -4,7 +4,8 @@ import {
   NotFoundException,
   ForbiddenException,
   ConflictException,
-  PreconditionFailedException, // 412
+  PreconditionFailedException,
+  Logger,
 } from "@nestjs/common";
 import {
   Prisma,
@@ -22,15 +23,19 @@ import { VoidItemDto } from "./dto/void-item.dto";
 import { CloseOrderDto } from "./dto/close-order.dto";
 import { AuthUser } from "../auth/jwt.strategy";
 import { JwtService } from "@nestjs/jwt";
+import { WebhooksService } from "../webhooks/webhooks.service";
 
 const MAX_RETRIES = 3;
 type DbLike = Prisma.TransactionClient | PrismaClient;
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(
     private readonly prisma: PrismaService,
-    private readonly jwtService: JwtService
+    private readonly jwtService: JwtService,
+    private readonly webhooks: WebhooksService
   ) {}
 
   /* -------------------------- If-Match helpers -------------------------- */
@@ -38,20 +43,13 @@ export class OrdersService {
   /** Aceita 5, "5", W/"5". Retorna número inteiro ou null se não enviado. */
   private parseIfMatch(ifMatch?: string): number | null {
     if (!ifMatch) return null;
-    const cleaned = String(ifMatch)
-      .trim()
-      .replace(/^W\/"?/, "")
-      .replace(/"$/, "");
+    const cleaned = String(ifMatch).trim().replace(/^W\/"?/, "").replace(/"$/, "");
     const n = Number(cleaned);
     return Number.isFinite(n) ? Math.trunc(n) : null;
   }
 
   /** Confere If-Match com a versão atual da ordem. Lança 412 se divergir. */
-  private async assertIfMatch(
-    tenantId: string,
-    orderId: string,
-    ifMatch?: string
-  ) {
+  private async assertIfMatch(tenantId: string, orderId: string, ifMatch?: string) {
     const expected = this.parseIfMatch(ifMatch);
     if (expected == null) return; // header não enviado -> não valida
     const row = await this.prisma.order.findFirst({
@@ -68,10 +66,7 @@ export class OrdersService {
 
   /* -------------------------- Utils -------------------------- */
 
-  private toDecimal(
-    n: number | string | undefined,
-    fallback = 0
-  ): Prisma.Decimal {
+  private toDecimal(n: number | string | undefined, fallback = 0): Prisma.Decimal {
     if (n === undefined || n === null) return new Prisma.Decimal(fallback);
     return new Prisma.Decimal(typeof n === "string" ? n : n.toString());
   }
@@ -85,9 +80,7 @@ export class OrdersService {
   }
 
   private async assertOrderInTenant(tenantId: string, id: string) {
-    const order = await this.prisma.order.findFirst({
-      where: { id, tenantId },
-    });
+    const order = await this.prisma.order.findFirst({ where: { id, tenantId } });
     if (!order) throw new NotFoundException("Comanda não encontrada.");
     return order;
   }
@@ -139,9 +132,7 @@ export class OrdersService {
             for (const inv of items) {
               const need = required.get(inv.id) || this.toDecimal(0);
               if (new Prisma.Decimal(inv.onHand).lt(need)) {
-                throw new ConflictException(
-                  "Estoque insuficiente para produção."
-                );
+                throw new ConflictException("Estoque insuficiente para produção.");
               }
             }
 
@@ -228,12 +219,11 @@ export class OrdersService {
           { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
         );
       } catch (e: any) {
-        // Re-tentativa em caso de serialization failure
         if (
           e?.code === "P2034" ||
           String(e?.message || "").includes("could not serialize access")
         ) {
-          if (++attempt >= 3) throw e;
+          if (++attempt >= MAX_RETRIES) throw e;
           await new Promise((r) => setTimeout(r, 50 * attempt));
           continue;
         }
@@ -243,24 +233,14 @@ export class OrdersService {
   }
 
   /** Recalcula subtotal/total e incrementa a versão. */
-  private async recomputeOrderTotals(
-    tenantId: string,
-    orderId: string,
-    db?: DbLike
-  ) {
+  private async recomputeOrderTotals(tenantId: string, orderId: string, db?: DbLike) {
     const client = (db ?? this.prisma) as DbLike;
 
     const sums = await client.orderItem.aggregate({
       where: {
         tenantId,
         orderId,
-        status: {
-          in: [
-            OrderItemStatus.STAGED,
-            OrderItemStatus.FIRED,
-            OrderItemStatus.CLOSED,
-          ],
-        },
+        status: { in: [OrderItemStatus.STAGED, OrderItemStatus.FIRED, OrderItemStatus.CLOSED] },
       },
       _sum: { total: true },
     });
@@ -281,12 +261,7 @@ export class OrdersService {
 
   /* -------------------------- Use cases -------------------------- */
 
-  async create(
-    tenantId: string,
-    user: AuthUser,
-    dto: CreateOrderDto,
-    idempotencyKey?: string
-  ) {
+  async create(tenantId: string, user: AuthUser, dto: CreateOrderDto, idempotencyKey?: string) {
     if (idempotencyKey) {
       const existing = await this.prisma.order.findFirst({
         where: { tenantId, idempotencyKey },
@@ -306,10 +281,10 @@ export class OrdersService {
       const p = prodMap.get(it.productId)!;
       if (!p.isActive) throw new BadRequestException("Produto inativo.");
       const unitPrice =
-        it.unitPrice !== undefined
-          ? this.toDecimal(it.unitPrice)
-          : new Prisma.Decimal(p.price);
+        it.unitPrice !== undefined ? this.toDecimal(it.unitPrice) : new Prisma.Decimal(p.price);
       const qty = new Prisma.Decimal(it.quantity);
+      if (unitPrice.lte(0)) throw new BadRequestException("unitPrice deve ser maior que zero.");
+      if (qty.lte(0)) throw new BadRequestException("quantity deve ser maior que zero.");
       const totalItem = unitPrice.times(qty);
       subtotal = subtotal.plus(totalItem);
       return {
@@ -325,8 +300,9 @@ export class OrdersService {
 
     const total = subtotal;
 
-    try {
-      const order = await this.prisma.order.create({
+    // 1) cria a ordem (transação)
+    const order = await this.prisma.$transaction(async (tx) => {
+      const created = await tx.order.create({
         data: {
           tenantId,
           status: OrderStatus.OPEN,
@@ -341,30 +317,27 @@ export class OrdersService {
         },
         include: { items: true },
       });
+      return created;
+    });
 
-      return order;
-    } catch (err: any) {
-      if (err?.code === "P2002") {
-        const target = String(err?.meta?.target || "");
-        if (target.includes("tenantId_idempotencyKey")) {
-          const existing = await this.prisma.order.findFirst({
-            where: { tenantId, idempotencyKey },
-            include: { items: true },
-          });
-          if (existing) return existing;
-        }
-        throw new BadRequestException("Violação de unicidade.");
-      }
-      if (err?.code === "P2003") {
-        throw new BadRequestException(
-          "Relacionamento inválido (FK). Verifique IDs informados."
-        );
-      }
-      if (err?.code === "22P02") {
-        throw new BadRequestException("IDs devem ser UUID válidos.");
-      }
-      throw err;
+    // 2) emite webhook fora da transação (não quebra o fluxo)
+    try {
+      await this.webhooks.queueEvent(tenantId, "order.created", {
+        order: {
+          id: order.id,
+          status: order.status,
+          tabNumber: order.tabNumber,
+          subtotal: order.subtotal,
+          total: order.total,
+          isSettled: order.isSettled ?? false,
+          createdAt: order.createdAt,
+        },
+      }, { deliverNow: true });
+    } catch (err) {
+      this.logger.warn(`Falha ao enfileirar webhook order.created: ${String(err)}`);
     }
+
+    return order;
   }
 
   async findAll(tenantId: string, user: AuthUser, query: OrdersQueryDto) {
@@ -376,8 +349,7 @@ export class OrdersService {
     const where: Prisma.OrderWhereInput = { tenantId };
     if (status) where.status = status;
     if (q) where.tabNumber = { contains: q, mode: "insensitive" };
-    if (String(mine).toLowerCase() === "true")
-      where.assignedToUserId = user.userId;
+    if (String(mine).toLowerCase() === "true") where.assignedToUserId = user.userId;
 
     const [items, total] = await Promise.all([
       this.prisma.order.findMany({
@@ -409,11 +381,7 @@ export class OrdersService {
     };
   }
 
-  async findOne(
-    tenantId: string,
-    id: string,
-    opts?: { includePayments?: boolean }
-  ) {
+  async findOne(tenantId: string, id: string, opts?: { includePayments?: boolean }) {
     const order = await this.prisma.order.findFirst({
       where: { id, tenantId },
       include: {
@@ -436,9 +404,7 @@ export class OrdersService {
 
     const order = await this.assertOrderInTenant(tenantId, orderId);
     if (order.status !== OrderStatus.OPEN) {
-      throw new BadRequestException(
-        "Somente comandas OPEN podem receber novos itens."
-      );
+      throw new BadRequestException("Somente comandas OPEN podem receber novos itens.");
     }
 
     const prodIds = Array.from(new Set(dto.items.map((i) => i.productId)));
@@ -451,10 +417,10 @@ export class OrdersService {
       const p = prodMap.get(it.productId)!;
       if (!p.isActive) throw new BadRequestException("Produto inativo.");
       const unitPrice =
-        it.unitPrice !== undefined
-          ? this.toDecimal(it.unitPrice)
-          : new Prisma.Decimal(p.price);
+        it.unitPrice !== undefined ? this.toDecimal(it.unitPrice) : new Prisma.Decimal(p.price);
       const qty = new Prisma.Decimal(it.quantity);
+      if (unitPrice.lte(0)) throw new BadRequestException("unitPrice deve ser maior que zero.");
+      if (qty.lte(0)) throw new BadRequestException("quantity deve ser maior que zero.");
       const totalItem = unitPrice.times(qty);
       return {
         tenantId,
@@ -475,13 +441,7 @@ export class OrdersService {
         where: {
           orderId,
           tenantId,
-          status: {
-            in: [
-              OrderItemStatus.STAGED,
-              OrderItemStatus.FIRED,
-              OrderItemStatus.CLOSED,
-            ],
-          },
+          status: { in: [OrderItemStatus.STAGED, OrderItemStatus.FIRED, OrderItemStatus.CLOSED] },
         },
         _sum: { total: true },
       });
@@ -501,6 +461,16 @@ export class OrdersService {
       });
     });
 
+    // evento opcional (não crítico)
+    try {
+      await this.webhooks.queueEvent(tenantId, "order.items_appended", {
+        orderId,
+        appendedCount: dto.items.length,
+      });
+    } catch (e) {
+      this.logger.warn(`Falha ao enfileirar webhook order.items_appended: ${String(e)}`);
+    }
+
     return this.findOne(tenantId, orderId);
   }
 
@@ -515,9 +485,7 @@ export class OrdersService {
 
     const order = await this.assertOrderInTenant(tenantId, orderId);
     if (order.status !== OrderStatus.OPEN) {
-      throw new BadRequestException(
-        "Apenas comandas OPEN podem disparar itens."
-      );
+      throw new BadRequestException("Apenas comandas OPEN podem disparar itens.");
     }
 
     const whereItems: Prisma.OrderItemWhereInput = {
@@ -557,6 +525,16 @@ export class OrdersService {
       data: { assignedToUserId: user.userId, version: { increment: 1 } },
     });
 
+    // evento (não crítico)
+    try {
+      await this.webhooks.queueEvent(tenantId, "order.items_fired", {
+        orderId,
+        itemIds: staged.map((s) => s.id),
+      });
+    } catch (e) {
+      this.logger.warn(`Falha ao enfileirar webhook order.items_fired: ${String(e)}`);
+    }
+
     return this.findOne(tenantId, orderId);
   }
 
@@ -571,7 +549,7 @@ export class OrdersService {
   ) {
     await this.assertIfMatch(tenantId, orderId, ifMatch);
 
-    // valida aprovação (inalterado)
+    // valida aprovação
     let approver: any;
     try {
       const tokenStr = (approvalToken || "").replace(/^Bearer\s+/i, "");
@@ -582,15 +560,10 @@ export class OrdersService {
       throw new ForbiddenException("Token de aprovação inválido.");
     }
     const approverRoles = new Set<string>();
-    if (approver?.systemRole)
-      approverRoles.add(String(approver.systemRole).toUpperCase());
+    if (approver?.systemRole) approverRoles.add(String(approver.systemRole).toUpperCase());
     if (approver?.role) approverRoles.add(String(approver.role).toUpperCase());
-    if (
-      !["SUPERADMIN", "ADMIN", "MODERATOR"].some((r) => approverRoles.has(r))
-    ) {
-      throw new ForbiddenException(
-        "Aprovação requer MODERATOR/ADMIN/SUPERADMIN."
-      );
+    if (!["SUPERADMIN", "ADMIN", "MODERATOR"].some((r) => approverRoles.has(r))) {
+      throw new ForbiddenException("Aprovação requer MODERATOR/ADMIN/SUPERADMIN.");
     }
 
     const item = await this.prisma.orderItem.findFirst({
@@ -599,19 +572,12 @@ export class OrdersService {
     });
     if (!item) throw new NotFoundException("Item não encontrado.");
     if (item.status !== OrderItemStatus.FIRED) {
-      throw new BadRequestException(
-        "Somente itens FIRED podem ser anulados (VOID)."
-      );
+      throw new BadRequestException("Somente itens FIRED podem ser anulados (VOID).");
     }
 
     const toCredit = await this.computeRequiredInventory(
       tenantId,
-      [
-        {
-          productId: item.productId,
-          quantity: new Prisma.Decimal(item.quantity),
-        },
-      ],
+      [{ productId: item.productId, quantity: new Prisma.Decimal(item.quantity) }],
       this.prisma
     );
     await this.creditInventorySerializable(tenantId, orderId, toCredit);
@@ -631,22 +597,25 @@ export class OrdersService {
       await this.recomputeOrderTotals(tenantId, orderId, tx);
     });
 
+    // evento (não crítico)
+    try {
+      await this.webhooks.queueEvent(tenantId, "order.item_voided", {
+        orderId,
+        itemId: item.id,
+      });
+    } catch (e) {
+      this.logger.warn(`Falha ao enfileirar webhook order.item_voided: ${String(e)}`);
+    }
+
     return this.findOne(tenantId, orderId);
   }
 
-  async cancel(
-    tenantId: string,
-    _user: AuthUser,
-    orderId: string,
-    ifMatch?: string
-  ) {
+  async cancel(tenantId: string, _user: AuthUser, orderId: string, ifMatch?: string) {
     await this.assertIfMatch(tenantId, orderId, ifMatch);
 
     const order = await this.assertOrderInTenant(tenantId, orderId);
     if (order.status !== OrderStatus.OPEN) {
-      throw new BadRequestException(
-        "Somente comandas OPEN podem ser canceladas."
-      );
+      throw new BadRequestException("Somente comandas OPEN podem ser canceladas.");
     }
 
     const activeCount = await this.prisma.orderItem.count({
@@ -676,6 +645,15 @@ export class OrdersService {
       });
     });
 
+    // evento (não crítico)
+    try {
+      await this.webhooks.queueEvent(tenantId, "order.canceled", {
+        orderId,
+      });
+    } catch (e) {
+      this.logger.warn(`Falha ao enfileirar webhook order.canceled: ${String(e)}`);
+    }
+
     return updated!;
   }
 
@@ -690,18 +668,14 @@ export class OrdersService {
 
     const order = await this.assertOrderInTenant(tenantId, orderId);
     if (order.status !== OrderStatus.OPEN) {
-      throw new BadRequestException(
-        "Somente comandas OPEN podem ser fechadas."
-      );
+      throw new BadRequestException("Somente comandas OPEN podem ser fechadas.");
     }
 
     const staged = await this.prisma.orderItem.count({
       where: { tenantId, orderId, status: OrderItemStatus.STAGED },
     });
     if (staged > 0) {
-      throw new BadRequestException(
-        "Há itens STAGED. Remova-os ou faça FIRE antes de fechar."
-      );
+      throw new BadRequestException("Há itens STAGED. Remova-os ou faça FIRE antes de fechar.");
     }
 
     const result = await this.prisma.$transaction(async (tx) => {
@@ -718,6 +692,18 @@ export class OrdersService {
         include: { items: true },
       });
     });
+
+    // evento (não crítico)
+    try {
+      await this.webhooks.queueEvent(tenantId, "order.closed", {
+        orderId: result.id,
+        subtotal: result.subtotal,
+        total: result.total,
+        closedAt: result.updatedAt,
+      }, { deliverNow: true });
+    } catch (e) {
+      this.logger.warn(`Falha ao enfileirar webhook order.closed: ${String(e)}`);
+    }
 
     return result;
   }

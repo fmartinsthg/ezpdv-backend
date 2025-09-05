@@ -14,11 +14,13 @@ const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
 const prisma_service_1 = require("../prisma/prisma.service");
 const jwt_1 = require("@nestjs/jwt");
+const webhooks_service_1 = require("../webhooks/webhooks.service");
 const MAX_RETRIES = 3;
 let OrdersService = class OrdersService {
-    constructor(prisma, jwtService) {
+    constructor(prisma, jwtService, webhooks) {
         this.prisma = prisma;
         this.jwtService = jwtService;
+        this.webhooks = webhooks;
     }
     /* -------------------------- If-Match helpers -------------------------- */
     /** Aceita 5, "5", W/"5". Retorna número inteiro ou null se não enviado. */
@@ -238,6 +240,10 @@ let OrdersService = class OrdersService {
                 ? this.toDecimal(it.unitPrice)
                 : new client_1.Prisma.Decimal(p.price);
             const qty = new client_1.Prisma.Decimal(it.quantity);
+            if (unitPrice.lte(0))
+                throw new common_1.BadRequestException("unitPrice deve ser maior que zero.");
+            if (qty.lte(0))
+                throw new common_1.BadRequestException("quantity deve ser maior que zero.");
             const totalItem = unitPrice.times(qty);
             subtotal = subtotal.plus(totalItem);
             return {
@@ -252,22 +258,40 @@ let OrdersService = class OrdersService {
         });
         const total = subtotal;
         try {
-            const order = await this.prisma.order.create({
-                data: {
+            // Criação da Order + evento outbox + deliveries na mesma transação
+            return await this.prisma.$transaction(async (tx) => {
+                const order = await tx.order.create({
+                    data: {
+                        tenantId,
+                        status: client_1.OrderStatus.OPEN,
+                        tabNumber: dto.tabNumber,
+                        subtotal,
+                        discount: this.toDecimal(0),
+                        total,
+                        idempotencyKey: idempotencyKey || null,
+                        createdByUserId: user.userId,
+                        assignedToUserId: user.userId,
+                        items: { create: itemsData },
+                    },
+                    include: { items: true },
+                });
+                await this.webhooks.queueEvent(tx, {
                     tenantId,
-                    status: client_1.OrderStatus.OPEN,
-                    tabNumber: dto.tabNumber,
-                    subtotal,
-                    discount: this.toDecimal(0),
-                    total,
-                    idempotencyKey: idempotencyKey || null,
-                    createdByUserId: user.userId,
-                    assignedToUserId: user.userId,
-                    items: { create: itemsData },
-                },
-                include: { items: true },
+                    type: "order.created",
+                    payload: {
+                        order: {
+                            id: order.id,
+                            status: order.status,
+                            tabNumber: order.tabNumber,
+                            subtotal: order.subtotal,
+                            total: order.total,
+                            isSettled: order.isSettled ?? false,
+                        },
+                    },
+                    version: 1,
+                });
+                return order;
             });
-            return order;
         }
         catch (err) {
             if (err?.code === "P2002") {
@@ -361,6 +385,10 @@ let OrdersService = class OrdersService {
                 ? this.toDecimal(it.unitPrice)
                 : new client_1.Prisma.Decimal(p.price);
             const qty = new client_1.Prisma.Decimal(it.quantity);
+            if (unitPrice.lte(0))
+                throw new common_1.BadRequestException("unitPrice deve ser maior que zero.");
+            if (qty.lte(0))
+                throw new common_1.BadRequestException("quantity deve ser maior que zero.");
             const totalItem = unitPrice.times(qty);
             return {
                 tenantId,
@@ -550,5 +578,6 @@ exports.OrdersService = OrdersService;
 exports.OrdersService = OrdersService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
-        jwt_1.JwtService])
+        jwt_1.JwtService,
+        webhooks_service_1.WebhooksService])
 ], OrdersService);
