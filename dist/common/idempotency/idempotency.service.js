@@ -22,23 +22,26 @@ let IdempotencyService = class IdempotencyService {
         /** Mapa de sinônimos → escopo CANÔNICO */
         this.scopeMap = {
             // Orders
-            'orders:append-items': 'orders:append-items',
-            'orders:items:append': 'orders:append-items',
-            'orders:void-item': 'orders:void-item',
-            'orders:items:void': 'orders:void-item',
-            'orders:fire': 'orders:fire',
-            'orders:cancel': 'orders:cancel',
-            'orders:close': 'orders:close',
-            'orders:create': 'orders:create',
+            "orders:append-items": "orders:append-items",
+            "orders:items:append": "orders:append-items",
+            "orders:void-item": "orders:void-item",
+            "orders:items:void": "orders:void-item",
+            "orders:fire": "orders:fire",
+            "orders:cancel": "orders:cancel",
+            "orders:close": "orders:close",
+            "orders:create": "orders:create",
             // Payments
-            'payments:capture': 'payments:capture',
-            'payments:refund': 'payments:refund',
-            'payments:cancel': 'payments:cancel',
+            "payments:capture": "payments:capture",
+            "payments:refund": "payments:refund",
+            "payments:cancel": "payments:cancel",
+            // Webhooks
+            "webhooks:create:endpoints": "webhooks:endpoints:create",
+            "webhooks:replay": "webhooks:replay",
         };
     }
     /** Retorna a forma canônica do escopo (ou o próprio se não houver mapeamento). */
     canonicalScope(input) {
-        const s = (input || '').trim();
+        const s = (input || "").trim();
         return this.scopeMap[s] || s;
     }
     /**
@@ -52,19 +55,19 @@ let IdempotencyService = class IdempotencyService {
             ? allowedFromHandler
             : [allowedFromHandler];
         if (!scopeHeader) {
-            throw new common_1.BadRequestException('Idempotency-Scope é obrigatório.');
+            throw new common_1.BadRequestException("Idempotency-Scope é obrigatório.");
         }
         const canonicalHeader = this.canonicalScope(scopeHeader);
         const canonicalAllowed = new Set(allowed.map((s) => this.canonicalScope(s)));
         if (!canonicalAllowed.has(canonicalHeader)) {
-            throw new common_1.BadRequestException('Escopo de idempotência não permitido para este endpoint.');
+            throw new common_1.BadRequestException("Escopo de idempotência não permitido para este endpoint.");
         }
         // Checagem extra contra allowlist global (hardening)
         if (!idempotency_constants_1.IDEMPOTENCY_ALLOWED_SCOPES.has(canonicalHeader)) {
-            throw new common_1.BadRequestException('Escopo de idempotência não é suportado globalmente.');
+            throw new common_1.BadRequestException("Escopo de idempotência não é suportado globalmente.");
         }
         if (!keyHeader) {
-            throw new common_1.BadRequestException('Idempotency-Key é obrigatório.');
+            throw new common_1.BadRequestException("Idempotency-Key é obrigatório.");
         }
     }
     /**
@@ -74,7 +77,7 @@ let IdempotencyService = class IdempotencyService {
     async beginOrReplay(tenantId, scope, key, requestHash) {
         const canonical = this.canonicalScope(scope);
         if (!idempotency_constants_1.IDEMPOTENCY_ALLOWED_SCOPES.has(canonical)) {
-            throw new common_1.BadRequestException('Escopo de idempotência não permitido.');
+            throw new common_1.BadRequestException("Escopo de idempotência não permitido.");
         }
         const now = new Date();
         const expiresAt = new Date(now.getTime() + idempotency_constants_1.IDEMPOTENCY_DEFAULTS.TTL_HOURS * 3600 * 1000);
@@ -91,10 +94,10 @@ let IdempotencyService = class IdempotencyService {
                 },
                 select: { id: true },
             });
-            return { action: 'PROCEED', recordId: created.id };
+            return { action: "PROCEED", recordId: created.id };
         }
         catch (e) {
-            if (e?.code !== 'P2002')
+            if (e?.code !== "P2002")
                 throw e; // não é unique → propaga
         }
         // Já existe (mesma chave no mesmo tenant/escopo)
@@ -114,10 +117,11 @@ let IdempotencyService = class IdempotencyService {
                 },
                 select: { id: true },
             });
-            return { action: 'PROCEED', recordId: created.id };
+            return { action: "PROCEED", recordId: created.id };
         }
         // Expirado → reabre janela
-        if (existing.expiresAt <= now || existing.status === client_1.IdempotencyStatus.EXPIRED) {
+        if (existing.expiresAt <= now ||
+            existing.status === client_1.IdempotencyStatus.EXPIRED) {
             const updated = await this.prisma.idempotencyKey.update({
                 where: { id: existing.id },
                 data: {
@@ -132,15 +136,15 @@ let IdempotencyService = class IdempotencyService {
                 },
                 select: { id: true },
             });
-            return { action: 'PROCEED', recordId: updated.id };
+            return { action: "PROCEED", recordId: updated.id };
         }
         // SUCCEEDED → REPLAY (somente se payload idêntico)
         if (existing.status === client_1.IdempotencyStatus.SUCCEEDED) {
             if (existing.requestHash !== requestHash) {
-                throw new common_1.ConflictException('IDEMPOTENCY_PAYLOAD_MISMATCH');
+                throw new common_1.ConflictException("IDEMPOTENCY_PAYLOAD_MISMATCH");
             }
             return {
-                action: 'REPLAY',
+                action: "REPLAY",
                 responseCode: existing.responseCode ?? 200,
                 responseBody: existing.responseBody ?? {},
             };
@@ -158,10 +162,10 @@ let IdempotencyService = class IdempotencyService {
                 },
                 select: { id: true },
             });
-            return { action: 'PROCEED', recordId: updated.id };
+            return { action: "PROCEED", recordId: updated.id };
         }
         // PROCESSING → o Interceptor retornará 429/Retry-After
-        return { action: 'IN_PROGRESS' };
+        return { action: "IN_PROGRESS" };
     }
     /**
      * Marca SUCCEEDED com snapshot (até X bytes) + hints de recurso.
@@ -169,11 +173,12 @@ let IdempotencyService = class IdempotencyService {
      */
     async succeed(recordId, responseCode, responseBody, options) {
         const limit = options?.truncateAtBytes ?? idempotency_constants_1.IDEMPOTENCY_DEFAULTS.SNAPSHOT_MAX_BYTES;
-        let bodyToStore = (responseBody ?? {});
+        let bodyToStore = (responseBody ??
+            {});
         let truncated = false;
         try {
             const raw = JSON.stringify(responseBody ?? {});
-            const bytes = Buffer.byteLength(raw, 'utf8');
+            const bytes = Buffer.byteLength(raw, "utf8");
             if (bytes > limit) {
                 bodyToStore = {
                     resourceId: options?.resourceId ?? null,
@@ -210,7 +215,7 @@ let IdempotencyService = class IdempotencyService {
                 data: {
                     status: client_1.IdempotencyStatus.FAILED,
                     errorCode,
-                    errorMessage: (errorMessage ?? '').slice(0, 500) || null,
+                    errorMessage: (errorMessage ?? "").slice(0, 500) || null,
                 },
             });
         }

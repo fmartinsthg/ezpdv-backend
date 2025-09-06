@@ -1,33 +1,36 @@
-import { Injectable, OnModuleDestroy } from '@nestjs/common';
+// src/webhooks/delivery/queue.service.ts
+import { Injectable, OnModuleDestroy, Inject } from '@nestjs/common';
 import { Queue, JobsOptions } from 'bullmq';
 import IORedis from 'ioredis';
-
-export const WEBHOOK_QUEUE_NAME = 'webhook-delivery';
+import { WEBHOOK_QUEUE_NAME } from '../webhooks.constants';
+import { BULLMQ_REDIS } from '../redis.provider';
 
 @Injectable()
 export class DeliveryQueueService implements OnModuleDestroy {
-  private readonly connection: IORedis;
   private readonly queue: Queue;
 
-  constructor() {
-    const url = process.env.REDIS_URL || 'redis://localhost:6379';
-    this.connection = new IORedis(url);
-    this.queue = new Queue(WEBHOOK_QUEUE_NAME, { connection: this.connection });
+  constructor(@Inject(BULLMQ_REDIS) connection: IORedis) { // ✅ conexão injetada
+    this.queue = new Queue(WEBHOOK_QUEUE_NAME, {
+      connection,
+      defaultJobOptions: {
+        // retries são controlados pelo banco (nextRetryAt)
+        attempts: 1,
+        removeOnComplete: true,
+        removeOnFail: false,
+      },
+    });
   }
 
   async enqueueDelivery(deliveryId: string, delayMs = 0) {
     const opts: JobsOptions = {
-      jobId: deliveryId,          // idempotente por delivery
+      jobId: deliveryId,              // idempotente por delivery
       delay: Math.max(0, delayMs),
-      attempts: 1,                // retries controlados pelo banco (nextRetryAt)
-      removeOnComplete: 1000,
-      removeOnFail: false,
     };
     await this.queue.add('deliver', { deliveryId }, opts);
   }
 
   async onModuleDestroy() {
     await this.queue.close();
-    await this.connection.quit();
+    // ❌ NÃO encerrar a conexão aqui; ela é compartilhada pelo provider
   }
 }
