@@ -13,7 +13,6 @@ export class DeliveryQueueService implements OnModuleDestroy {
     this.queue = new Queue(WEBHOOK_QUEUE_NAME, {
       connection,
       defaultJobOptions: {
-        // retries são controlados pelo banco (nextRetryAt)
         attempts: 1,
         removeOnComplete: true,
         removeOnFail: false,
