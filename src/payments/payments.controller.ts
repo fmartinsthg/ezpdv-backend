@@ -10,7 +10,7 @@ import {
   Query,
   Req,
   UseGuards,
-} from '@nestjs/common';
+} from "@nestjs/common";
 import {
   ApiBearerAuth,
   ApiHeader,
@@ -18,116 +18,160 @@ import {
   ApiParam,
   ApiResponse,
   ApiTags,
-} from '@nestjs/swagger';
-import { PaymentsService } from './payments.service';
-import { CreatePaymentDto } from './dto/create-payment.dto';
-import { RefundPaymentDto } from './dto/refund-payment.dto';
-import { CancelPaymentDto } from './dto/cancel-payment.dto';
-import { QueryPaymentsDto } from './dto/query-payments.dto';
+} from "@nestjs/swagger";
+import { PaymentsService } from "./payments.service";
+import { CreatePaymentDto } from "./dto/create-payment.dto";
+import { RefundPaymentDto } from "./dto/refund-payment.dto";
+import { CancelPaymentDto } from "./dto/cancel-payment.dto";
+import { QueryPaymentsDto } from "./dto/query-payments.dto";
 
-import { JwtAuthGuard } from '../auth/jwt.guard';
-import { RolesGuard } from '../common/guards/roles.guard';
-import { Roles } from '../common/decorators/roles.decorator';
+import { JwtAuthGuard } from "../auth/jwt.guard";
+import { RolesGuard } from "../auth/roles.guard";
+import { Roles } from "../auth/roles.decorator";
 
-import { CurrentUser } from '../auth/current-user.decorator';
-import { AuthUser } from '../auth/jwt.strategy';
-import { TenantId } from '../common/tenant/tenant.decorator';
+import { CurrentUser } from "../auth/current-user.decorator";
+import { AuthUser } from "../auth/jwt.strategy";
+import { TenantId } from "../common/tenant/tenant.decorator";
+import { TenantContextGuard } from "../common/tenant/tenant-context.guard";
 
-import { PaymentsApprovalGuard } from './payments.approval.guard';
-import { Idempotent } from '../common/idempotency/idempotency.decorator';
+import { PaymentsApprovalGuard } from "./payments.approval.guard";
+import { Idempotent } from "../common/idempotency/idempotency.decorator";
 
-@ApiTags('Payments')
+@ApiTags("Payments")
 @ApiBearerAuth()
 @Controller()
-@UseGuards(JwtAuthGuard, RolesGuard)
+@UseGuards(JwtAuthGuard, TenantContextGuard, RolesGuard)
 export class PaymentsController {
   constructor(private readonly payments: PaymentsService) {}
 
-  @Post('tenants/:tenantId/orders/:orderId/payments')
-  @Roles('SUPERADMIN', 'ADMIN', 'MODERATOR', 'USER')
+  @Post("tenants/:tenantId/orders/:orderId/payments")
+  @Roles("SUPERADMIN", "ADMIN", "MODERATOR", "USER")
   @HttpCode(201)
-  @Idempotent('payments:capture')
-  @ApiOperation({ summary: 'Captura de pagamento para uma ordem CLOSED (split-friendly)' })
-  @ApiHeader({ name: 'Idempotency-Key', required: true, description: 'UUID por request' })
-  @ApiHeader({ name: 'Idempotency-Scope', required: true, description: 'Valor fixo: payments:capture' })
-  @ApiParam({ name: 'tenantId', example: 'eeb5f3a5-9f0f-4f64-9a63-1d1d91de0e5b' })
-  @ApiParam({ name: 'orderId', example: '6fbc4c11-5b30-4ab6-a1a9-2b20b847da0b' })
-  @ApiResponse({ status: 201, description: 'Pagamento capturado' })
-  @ApiResponse({ status: 409, description: 'Conflito de soma ou idempotência' })
+  @Idempotent("payments:capture")
+  @ApiOperation({
+    summary: "Captura de pagamento para uma ordem CLOSED (split-friendly)",
+  })
+  @ApiHeader({
+    name: "Idempotency-Key",
+    required: true,
+    description: "UUID por request",
+  })
+  @ApiHeader({
+    name: "Idempotency-Scope",
+    required: true,
+    description: "Valor fixo: payments:capture",
+  })
+  @ApiParam({
+    name: "tenantId",
+    example: "eeb5f3a5-9f0f-4f64-9a63-1d1d91de0e5b",
+  })
+  @ApiParam({
+    name: "orderId",
+    example: "6fbc4c11-5b30-4ab6-a1a9-2b20b847da0b",
+  })
+  @ApiResponse({ status: 201, description: "Pagamento capturado" })
+  @ApiResponse({ status: 409, description: "Conflito de soma ou idempotência" })
   async createAndCapture(
     @TenantId() tenantId: string,
-    @Param('orderId', new ParseUUIDPipe()) orderId: string,
+    @Param("orderId", new ParseUUIDPipe()) orderId: string,
     @Body() dto: CreatePaymentDto,
-    @CurrentUser() user: AuthUser,
+    @CurrentUser() user: AuthUser
   ) {
-    const actorId = (user as any)?.id ?? (user as any)?.sub;
+    const actorId =
+      (user as any)?.userId ?? (user as any)?.id ?? (user as any)?.sub;
     if (!actorId) {
-      throw new BadRequestException('Invalid authenticated user (missing id/sub).');
+      throw new BadRequestException(
+        "Invalid authenticated user (missing id/sub)."
+      );
     }
     dto.orderId = orderId;
     return this.payments.capture(tenantId, dto, actorId);
   }
 
-  @Get('tenants/:tenantId/orders/:orderId/payments')
-  @Roles('SUPERADMIN', 'ADMIN', 'MODERATOR', 'USER')
-  @ApiOperation({ summary: 'Lista pagamentos de uma ordem' })
+  @Get("tenants/:tenantId/orders/:orderId/payments")
+  @Roles("SUPERADMIN", "ADMIN", "MODERATOR", "USER")
+  @ApiOperation({ summary: "Lista pagamentos de uma ordem" })
   async listByOrder(
     @TenantId() tenantId: string,
-    @Param('orderId', new ParseUUIDPipe()) orderId: string,
+    @Param("orderId", new ParseUUIDPipe()) orderId: string
   ) {
     return this.payments.listByOrder(tenantId, orderId);
   }
 
-  @Get('tenants/:tenantId/payments')
-  @Roles('SUPERADMIN', 'ADMIN', 'MODERATOR')
-  @ApiOperation({ summary: 'Lista pagamentos do tenant (filtros + paginação)' })
+  @Get("tenants/:tenantId/payments")
+  @Roles("SUPERADMIN", "ADMIN", "MODERATOR")
+  @ApiOperation({ summary: "Lista pagamentos do tenant (filtros + paginação)" })
   async listByTenant(
     @TenantId() tenantId: string,
-    @Query() query: QueryPaymentsDto,
+    @Query() query: QueryPaymentsDto
   ) {
     return this.payments.listByTenant(tenantId, query);
   }
 
-  @Post('tenants/:tenantId/payments/:paymentId/refund')
-  @Roles('SUPERADMIN', 'ADMIN', 'MODERATOR')
+  @Post("tenants/:tenantId/payments/:paymentId/refund")
+  @Roles("SUPERADMIN", "ADMIN", "MODERATOR")
   @UseGuards(PaymentsApprovalGuard)
-  @Idempotent('payments:refund')
-  @ApiOperation({ summary: 'Estorno total/parcial de um pagamento CAPTURED' })
-  @ApiHeader({ name: 'Idempotency-Key', required: true })
-  @ApiHeader({ name: 'Idempotency-Scope', required: true, description: 'Valor fixo: payments:refund' })
-  @ApiHeader({ name: 'X-Approval-Token', required: true, description: 'JWT válido com role MODERATOR/ADMIN/SUPERADMIN' })
-  @ApiParam({ name: 'paymentId', example: 'b9a7a6d9-2a6d-4d8a-8a71-9e8f3fddf6d0' })
+  @Idempotent("payments:refund")
+  @ApiOperation({ summary: "Estorno total/parcial de um pagamento CAPTURED" })
+  @ApiHeader({ name: "Idempotency-Key", required: true })
+  @ApiHeader({
+    name: "Idempotency-Scope",
+    required: true,
+    description: "Valor fixo: payments:refund",
+  })
+  @ApiHeader({
+    name: "X-Approval-Token",
+    required: true,
+    description: "JWT válido com role MODERATOR/ADMIN/SUPERADMIN",
+  })
+  @ApiParam({
+    name: "paymentId",
+    example: "b9a7a6d9-2a6d-4d8a-8a71-9e8f3fddf6d0",
+  })
   async refund(
     @TenantId() tenantId: string,
-    @Param('paymentId', new ParseUUIDPipe()) paymentId: string,
+    @Param("paymentId", new ParseUUIDPipe()) paymentId: string,
     @Body() dto: RefundPaymentDto,
-    @Req() req: any,
+    @Req() req: any
   ) {
-    const approvalUserId = req?.approvalUser?.id ?? req?.approvalUser?.sub;
+    const approvalUserId =
+      req?.approvalUser?.userId ??
+      req?.approvalUser?.id ??
+      req?.approvalUser?.sub;
     if (!approvalUserId) {
-      throw new BadRequestException('Missing approval user id/sub');
+      throw new BadRequestException("Missing approval user id/sub");
     }
     return this.payments.refund(tenantId, paymentId, dto, approvalUserId);
   }
 
-  @Post('tenants/:tenantId/payments/:paymentId/cancel')
-  @Roles('SUPERADMIN', 'ADMIN', 'MODERATOR')
+  @Post("tenants/:tenantId/payments/:paymentId/cancel")
+  @Roles("SUPERADMIN", "ADMIN", "MODERATOR")
   @UseGuards(PaymentsApprovalGuard)
-  @Idempotent('payments:cancel')
-  @ApiOperation({ summary: 'Cancelamento de um pagamento PENDING' })
-  @ApiHeader({ name: 'Idempotency-Key', required: true })
-  @ApiHeader({ name: 'Idempotency-Scope', required: true, description: 'Valor fixo: payments:cancel' })
-  @ApiHeader({ name: 'X-Approval-Token', required: true })
-  @ApiParam({ name: 'paymentId', example: 'b9a7a6d9-2a6d-4d8a-8a71-9e8f3fddf6d0' })
+  @Idempotent("payments:cancel")
+  @ApiOperation({ summary: "Cancelamento de um pagamento PENDING" })
+  @ApiHeader({ name: "Idempotency-Key", required: true })
+  @ApiHeader({
+    name: "Idempotency-Scope",
+    required: true,
+    description: "Valor fixo: payments:cancel",
+  })
+  @ApiHeader({ name: "X-Approval-Token", required: true })
+  @ApiParam({
+    name: "paymentId",
+    example: "b9a7a6d9-2a6d-4d8a-8a71-9e8f3fddf6d0",
+  })
   async cancel(
     @TenantId() tenantId: string,
-    @Param('paymentId', new ParseUUIDPipe()) paymentId: string,
+    @Param("paymentId", new ParseUUIDPipe()) paymentId: string,
     @Body() dto: CancelPaymentDto,
-    @Req() req: any,
+    @Req() req: any
   ) {
-    const approvalUserId = req?.approvalUser?.id ?? req?.approvalUser?.sub;
+    const approvalUserId =
+      req?.approvalUser?.userId ??
+      req?.approvalUser?.id ??
+      req?.approvalUser?.sub;
     if (!approvalUserId) {
-      throw new BadRequestException('Missing approval user id/sub');
+      throw new BadRequestException("Missing approval user id/sub");
     }
     return this.payments.cancel(tenantId, paymentId, dto, approvalUserId);
   }

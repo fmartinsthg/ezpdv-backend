@@ -17,25 +17,26 @@ const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
 const prisma_service_1 = require("../prisma/prisma.service");
 const payment_gateway_interface_1 = require("./gateway/payment-gateway.interface");
-const library_1 = require("@prisma/client/runtime/library");
+const webhooks_service_1 = require("../webhooks/webhooks.service");
 let PaymentsService = class PaymentsService {
-    constructor(prisma, gateway) {
+    constructor(prisma, gateway, webhooks) {
         this.prisma = prisma;
         this.gateway = gateway;
+        this.webhooks = webhooks;
     }
     /** Quantiza valor monetário para 2 casas decimais (consistência). */
     q2(v) {
-        return new library_1.Decimal(v).toDecimalPlaces(2);
+        return new client_1.Prisma.Decimal(v).toDecimalPlaces(2);
     }
     /** Converte para centavos (minor units) para gateways. */
     toMinorUnits(amount) {
         const v = this.q2(amount);
-        return Number(v.mul(100).toFixed(0));
+        return Number(v.times(100).toFixed(0));
     }
     async listByOrder(tenantId, orderId) {
         return this.prisma.payment.findMany({
             where: { tenantId, orderId },
-            orderBy: { createdAt: 'asc' },
+            orderBy: { createdAt: "asc" },
         });
     }
     async listByTenant(tenantId, query) {
@@ -56,7 +57,7 @@ let PaymentsService = class PaymentsService {
         const [items, total] = await this.prisma.$transaction([
             this.prisma.payment.findMany({
                 where,
-                orderBy: { createdAt: 'desc' },
+                orderBy: { createdAt: "desc" },
                 skip: (page - 1) * pageSize,
                 take: pageSize,
             }),
@@ -64,26 +65,29 @@ let PaymentsService = class PaymentsService {
         ]);
         return { items, total, page, pageSize };
     }
+    /**
+     * Captura pagamentos APENAS para ordens CLOSED (consistente com o fluxo KDS -> close -> payments).
+     * Gera eventos OrderEvent adequados e webhooks correspondentes.
+     */
     async capture(tenantId, dto, currentUserId) {
         const orderId = dto.orderId;
         const amount = this.q2(dto.amount);
         if (amount.lte(0))
-            throw new common_1.BadRequestException('Amount must be > 0');
+            throw new common_1.BadRequestException("Amount must be > 0");
         if (!currentUserId)
-            throw new common_1.BadRequestException('Missing actor user id');
-        return this.prisma.$transaction(async (tx) => {
-            // Lock da order
-            const order = await tx
-                .$queryRaw `
+            throw new common_1.BadRequestException("Missing actor user id");
+        const result = await this.prisma.$transaction(async (tx) => {
+            // Lock da order (somente CLOSED aceita pagamento)
+            const order = await tx.$queryRaw `
             SELECT "id","status","total"
             FROM "Order"
             WHERE "id" = ${orderId} AND "tenantId" = ${tenantId}
             FOR UPDATE
           `.then((r) => r[0]);
             if (!order)
-                throw new common_1.NotFoundException('Order not found for this tenant');
-            if (order.status !== 'CLOSED')
-                throw new common_1.ConflictException('Only CLOSED orders accept payments');
+                throw new common_1.NotFoundException("Order not found for this tenant");
+            if (order.status !== client_1.OrderStatus.CLOSED)
+                throw new common_1.ConflictException("Only CLOSED orders accept payments");
             // Sumários (capturado líquido = capturado - reembolsado)
             const capturedAgg = await tx.payment.aggregate({
                 where: { tenantId, orderId, status: client_1.PaymentStatus.CAPTURED },
@@ -103,8 +107,8 @@ let PaymentsService = class PaymentsService {
             const orderTotal = this.q2(order.total);
             if (netCaptured.add(amount).gt(orderTotal)) {
                 throw new common_1.ConflictException({
-                    code: 'PAYMENT_AMOUNT_EXCEEDS_DUE',
-                    message: 'Captured sum would exceed order.total',
+                    code: "PAYMENT_AMOUNT_EXCEEDS_DUE",
+                    message: "Captured sum would exceed order.total",
                     details: {
                         orderId: order.id,
                         orderTotal: orderTotal.toString(),
@@ -116,18 +120,18 @@ let PaymentsService = class PaymentsService {
             }
             // Gateway (stub/mock)
             const gw = await this.gateway.capture({
-                provider: dto.provider ?? 'NULL',
+                provider: dto.provider ?? "NULL",
                 amountMinor: this.toMinorUnits(amount),
-                currency: 'BRL',
+                currency: "BRL",
                 providerTxnId: dto.providerTxnId,
                 metadata: dto.metadata,
             });
             if (!gw.ok)
-                throw new common_1.ConflictException('Gateway capture failed');
+                throw new common_1.ConflictException("Gateway capture failed");
             // Tenta associar a um intent OPEN (se existir)
             const openIntent = await tx.paymentIntent.findFirst({
                 where: { tenantId, orderId, status: client_1.PaymentIntentStatus.OPEN },
-                orderBy: { createdAt: 'desc' },
+                orderBy: { createdAt: "desc" },
             });
             // 100% relacional; trava duplicidade por (tenantId, provider, providerTxnId)
             const data = {
@@ -148,7 +152,7 @@ let PaymentsService = class PaymentsService {
             }
             catch (e) {
                 // De-dupe: violação de unique (tenantId, provider, providerTxnId)
-                if (e?.code === 'P2002' &&
+                if (e?.code === "P2002" &&
                     (data.provider ?? dto.provider) &&
                     (data.providerTxnId ?? dto.providerTxnId)) {
                     const existing = await tx.payment.findFirst({
@@ -176,7 +180,17 @@ let PaymentsService = class PaymentsService {
                     type: client_1.PaymentTransactionType.CAPTURE,
                     amount,
                     byUserId: currentUserId,
-                    reason: 'capture',
+                    reason: "capture",
+                },
+            });
+            // OrderEvent: pagamento capturado
+            await tx.orderEvent.create({
+                data: {
+                    tenantId,
+                    orderId,
+                    userId: currentUserId,
+                    eventType: "PAYMENT_CAPTURED",
+                    reason: `${payment.method}:${payment.id}`,
                 },
             });
             // Se havia intent OPEN e quitou, marcar COMPLETED
@@ -187,7 +201,8 @@ let PaymentsService = class PaymentsService {
                     data: { status: client_1.PaymentIntentStatus.COMPLETED },
                 });
             }
-            // ✅ Atualiza flags financeiras da Order (isSettled/paidAt) quando zera o restante
+            // Atualiza flags financeiras da Order + version bump
+            let settledNow = false;
             if (newCaptured.gte(orderTotal)) {
                 const current = await tx.order.findUnique({
                     where: { id: orderId },
@@ -198,33 +213,68 @@ let PaymentsService = class PaymentsService {
                     data: {
                         isSettled: true,
                         paidAt: current?.paidAt ?? new Date(),
+                        version: { increment: 1 },
+                    },
+                });
+                settledNow = true;
+                await tx.orderEvent.create({
+                    data: {
+                        tenantId,
+                        orderId,
+                        userId: currentUserId,
+                        eventType: "ORDER_SETTLED",
+                        reason: `captured=${newCaptured.toString()}`,
                     },
                 });
             }
+            else {
+                // mantém isSettled como está (normalmente false); ainda assim incrementa versão
+                await tx.order.update({
+                    where: { id: orderId },
+                    data: { version: { increment: 1 } },
+                });
+            }
             return {
-                ...payment,
+                payment,
                 summary: {
                     orderTotal: orderTotal.toString(),
                     capturedSum: newCaptured.toString(),
                     remainingDue: orderTotal.minus(newCaptured).toString(),
                 },
+                settledNow,
             };
         }, { timeout: 20000 });
+        // Webhooks fora da transação
+        try {
+            await this.webhooks.queueEvent(tenantId, "payment.captured", {
+                orderId: dto.orderId,
+                paymentId: result.payment.id,
+                amount: result.payment.amount,
+                method: result.payment.method,
+            }, { deliverNow: true });
+            if (result.settledNow) {
+                await this.webhooks.queueEvent(tenantId, "order.settled", { orderId: dto.orderId }, { deliverNow: true });
+            }
+        }
+        catch {
+            /* noop: não quebra o fluxo */
+        }
+        return { ...result.payment, summary: result.summary };
     }
     async refund(tenantId, paymentId, dto, approvalUserId) {
         const amount = this.q2(dto.amount);
         if (amount.lte(0))
-            throw new common_1.BadRequestException('Amount must be > 0');
+            throw new common_1.BadRequestException("Amount must be > 0");
         if (!approvalUserId)
-            throw new common_1.BadRequestException('Missing approval user id');
-        return this.prisma.$transaction(async (tx) => {
+            throw new common_1.BadRequestException("Missing approval user id");
+        const res = await this.prisma.$transaction(async (tx) => {
             const payment = await tx.payment.findFirst({
                 where: { id: paymentId, tenantId },
             });
             if (!payment)
-                throw new common_1.NotFoundException('Payment not found');
+                throw new common_1.NotFoundException("Payment not found");
             if (payment.status !== client_1.PaymentStatus.CAPTURED)
-                throw new common_1.ConflictException('Only CAPTURED payments can be refunded');
+                throw new common_1.ConflictException("Only CAPTURED payments can be refunded");
             // Lock da ordem do pagamento
             await tx.$queryRaw `
         SELECT "id" FROM "Order"
@@ -239,17 +289,17 @@ let PaymentsService = class PaymentsService {
             const alreadyRefundedForThisPayment = this.q2(refundedAgg._sum.amount ?? 0);
             const remainingForThisPayment = this.q2(payment.amount).minus(alreadyRefundedForThisPayment);
             if (amount.gt(remainingForThisPayment)) {
-                throw new common_1.ConflictException('Refund amount exceeds remaining captured amount for this payment');
+                throw new common_1.ConflictException("Refund amount exceeds remaining captured amount for this payment");
             }
             const gw = await this.gateway.refund({
-                provider: payment.provider ?? 'NULL',
-                providerTxnId: payment.providerTxnId ?? '',
+                provider: payment.provider ?? "NULL",
+                providerTxnId: payment.providerTxnId ?? "",
                 amountMinor: this.toMinorUnits(amount),
-                currency: 'BRL',
+                currency: "BRL",
                 reason: dto.reason,
             });
             if (!gw.ok)
-                throw new common_1.ConflictException('Gateway refund failed');
+                throw new common_1.ConflictException("Gateway refund failed");
             await tx.paymentTransaction.create({
                 data: {
                     tenantId,
@@ -260,6 +310,7 @@ let PaymentsService = class PaymentsService {
                     reason: dto.reason,
                 },
             });
+            // Pode mudar o status do próprio pagamento
             const newRemainingForThisPayment = remainingForThisPayment.minus(amount);
             if (newRemainingForThisPayment.lte(0)) {
                 await tx.payment.update({
@@ -267,9 +318,23 @@ let PaymentsService = class PaymentsService {
                     data: { status: client_1.PaymentStatus.REFUNDED },
                 });
             }
-            // ✅ Recalcula posição financeira da ORDEM e ajusta flags
+            // OrderEvent: reembolso
+            await tx.orderEvent.create({
+                data: {
+                    tenantId,
+                    orderId: payment.orderId,
+                    userId: approvalUserId,
+                    eventType: "PAYMENT_REFUNDED",
+                    reason: dto.reason ?? `refund:${amount.toString()}`,
+                },
+            });
+            // Recalcula posição financeira da ORDEM e ajusta flags
             const orderAgg = await tx.payment.aggregate({
-                where: { tenantId, orderId: payment.orderId, status: client_1.PaymentStatus.CAPTURED },
+                where: {
+                    tenantId,
+                    orderId: payment.orderId,
+                    status: client_1.PaymentStatus.CAPTURED,
+                },
                 _sum: { amount: true },
             });
             const refundsAgg = await tx.paymentTransaction.aggregate({
@@ -288,12 +353,14 @@ let PaymentsService = class PaymentsService {
                 select: { total: true, paidAt: true },
             });
             const orderTotal = this.q2(orderRow.total);
+            let unsettledNow = false;
             if (netCapturedForOrder.gte(orderTotal)) {
                 await tx.order.update({
                     where: { id: payment.orderId },
                     data: {
                         isSettled: true,
                         paidAt: orderRow.paidAt ?? new Date(),
+                        version: { increment: 1 },
                     },
                 });
             }
@@ -303,31 +370,60 @@ let PaymentsService = class PaymentsService {
                     data: {
                         isSettled: false,
                         paidAt: null,
+                        version: { increment: 1 },
+                    },
+                });
+                unsettledNow = true;
+                await tx.orderEvent.create({
+                    data: {
+                        tenantId,
+                        orderId: payment.orderId,
+                        userId: approvalUserId,
+                        eventType: "ORDER_UNSETTLED",
+                        reason: `net=${netCapturedForOrder.toString()}`,
                     },
                 });
             }
-            return tx.payment.findUnique({ where: { id: payment.id } });
+            const updated = await tx.payment.findUnique({
+                where: { id: payment.id },
+            });
+            return { updated, unsettledNow, orderId: payment.orderId, amount };
         });
+        // Webhooks fora da transação
+        try {
+            await this.webhooks.queueEvent(tenantId, "payment.refunded", {
+                paymentId,
+                orderId: res.orderId,
+                amount: res.amount,
+            }, { deliverNow: true });
+            if (res.unsettledNow) {
+                await this.webhooks.queueEvent(tenantId, "order.unsettled", { orderId: res.orderId }, { deliverNow: true });
+            }
+        }
+        catch {
+            /* noop */
+        }
+        return res.updated;
     }
     async cancel(tenantId, paymentId, dto, approvalUserId) {
         if (!approvalUserId)
-            throw new common_1.BadRequestException('Missing approval user id');
-        return this.prisma.$transaction(async (tx) => {
+            throw new common_1.BadRequestException("Missing approval user id");
+        const updated = await this.prisma.$transaction(async (tx) => {
             const payment = await tx.payment.findFirst({
                 where: { id: paymentId, tenantId },
             });
             if (!payment)
-                throw new common_1.NotFoundException('Payment not found');
+                throw new common_1.NotFoundException("Payment not found");
             if (payment.status !== client_1.PaymentStatus.PENDING)
-                throw new common_1.ConflictException('Only PENDING payments can be canceled');
+                throw new common_1.ConflictException("Only PENDING payments can be canceled");
             const gw = await this.gateway.cancel({
-                provider: payment.provider ?? 'NULL',
-                providerTxnId: payment.providerTxnId ?? '',
+                provider: payment.provider ?? "NULL",
+                providerTxnId: payment.providerTxnId ?? "",
                 reason: dto.reason,
             });
             if (!gw.ok)
-                throw new common_1.ConflictException('Gateway cancel failed');
-            const updated = await tx.payment.update({
+                throw new common_1.ConflictException("Gateway cancel failed");
+            const up = await tx.payment.update({
                 where: { id: payment.id },
                 data: { status: client_1.PaymentStatus.CANCELED },
             });
@@ -338,18 +434,38 @@ let PaymentsService = class PaymentsService {
                     type: client_1.PaymentTransactionType.CANCEL,
                     amount: this.q2(0),
                     byUserId: approvalUserId,
-                    reason: dto.reason ?? 'cancel',
+                    reason: dto.reason ?? "cancel",
                 },
             });
-            // Observação: cancelamento de PENDING não altera os somatórios capturados,
-            // portanto não mexemos nas flags isSettled/paidAt aqui.
-            return updated;
+            // OrderEvent: cancelamento de pagamento
+            await tx.orderEvent.create({
+                data: {
+                    tenantId,
+                    orderId: payment.orderId,
+                    userId: approvalUserId,
+                    eventType: "PAYMENT_CANCELED",
+                    reason: dto.reason ?? "cancel",
+                },
+            });
+            return up;
         });
+        // Webhook fora da transação
+        try {
+            await this.webhooks.queueEvent(tenantId, "payment.canceled", {
+                paymentId,
+                orderId: updated.orderId,
+            }, { deliverNow: true });
+        }
+        catch {
+            /* noop */
+        }
+        // Observação: cancelamento de PENDING não altera somatórios capturados; não mexemos em isSettled/paidAt.
+        return updated;
     }
 };
 exports.PaymentsService = PaymentsService;
 exports.PaymentsService = PaymentsService = __decorate([
     (0, common_1.Injectable)(),
     __param(1, (0, common_1.Inject)(payment_gateway_interface_1.PAYMENT_GATEWAY)),
-    __metadata("design:paramtypes", [prisma_service_1.PrismaService, Object])
+    __metadata("design:paramtypes", [prisma_service_1.PrismaService, Object, webhooks_service_1.WebhooksService])
 ], PaymentsService);

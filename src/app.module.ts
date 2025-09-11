@@ -20,6 +20,8 @@ import { PlatformModule } from "./platform/platform.module";
 import { IdempotencyModule } from "./common/idempotency/idempotency.module";
 import { PaymentsModule } from "./payments/payments.module";
 import { PaymentIntentsModule } from "./payment-intents/payment-intents.module";
+import { KdsModule } from "./kds/kds.module";
+import { WebhooksModule } from "./webhooks/webhooks.module";
 
 @Module({
   imports: [
@@ -36,6 +38,8 @@ import { PaymentIntentsModule } from "./payment-intents/payment-intents.module";
     IdempotencyModule,
     PaymentsModule,
     PaymentIntentsModule,
+    WebhooksModule,
+    KdsModule,
   ],
   controllers: [AppController],
   providers: [

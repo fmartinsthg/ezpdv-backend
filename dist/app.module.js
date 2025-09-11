@@ -26,6 +26,8 @@ const platform_module_1 = require("./platform/platform.module");
 const idempotency_module_1 = require("./common/idempotency/idempotency.module");
 const payments_module_1 = require("./payments/payments.module");
 const payment_intents_module_1 = require("./payment-intents/payment-intents.module");
+const kds_module_1 = require("./kds/kds.module");
+const webhooks_module_1 = require("./webhooks/webhooks.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -45,6 +47,8 @@ exports.AppModule = AppModule = __decorate([
             idempotency_module_1.IdempotencyModule,
             payments_module_1.PaymentsModule,
             payment_intents_module_1.PaymentIntentsModule,
+            webhooks_module_1.WebhooksModule,
+            kds_module_1.KdsModule,
         ],
         controllers: [app_controller_1.AppController],
         providers: [

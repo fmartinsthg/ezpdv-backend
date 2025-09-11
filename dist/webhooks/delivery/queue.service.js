@@ -27,7 +27,6 @@ let DeliveryQueueService = class DeliveryQueueService {
         this.queue = new bullmq_1.Queue(webhooks_constants_1.WEBHOOK_QUEUE_NAME, {
             connection,
             defaultJobOptions: {
-                // retries são controlados pelo banco (nextRetryAt)
                 attempts: 1,
                 removeOnComplete: true,
                 removeOnFail: false,

@@ -57,7 +57,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
     async loadProductsMap(tenantId, productIds) {
         const products = await this.prisma.product.findMany({
             where: { tenantId, id: { in: productIds } },
-            select: { id: true, price: true, isActive: true },
+            select: { id: true, price: true, isActive: true, prepStation: true },
         });
         return new Map(products.map((p) => [p.id, p]));
     }
@@ -126,8 +126,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 }, { isolationLevel: client_1.Prisma.TransactionIsolationLevel.Serializable });
             }
             catch (e) {
-                if (e?.code === "P2034" ||
-                    String(e?.message || "").includes("could not serialize access")) {
+                if (e?.code === "P2034" || String(e?.message || "").includes("could not serialize access")) {
                     if (++attempt >= MAX_RETRIES)
                         throw e;
                     await new Promise((r) => setTimeout(r, 50 * attempt));
@@ -172,8 +171,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 }, { isolationLevel: client_1.Prisma.TransactionIsolationLevel.Serializable });
             }
             catch (e) {
-                if (e?.code === "P2034" ||
-                    String(e?.message || "").includes("could not serialize access")) {
+                if (e?.code === "P2034" || String(e?.message || "").includes("could not serialize access")) {
                     if (++attempt >= MAX_RETRIES)
                         throw e;
                     await new Promise((r) => setTimeout(r, 50 * attempt));
@@ -245,7 +243,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
             };
         });
         const total = subtotal;
-        // 1) cria a ordem (transação)
+        // cria a ordem (transação)
         const order = await this.prisma.$transaction(async (tx) => {
             const created = await tx.order.create({
                 data: {
@@ -262,9 +260,21 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 },
                 include: { items: true },
             });
+            // auditoria da criação
+            await tx.orderEvent.create({
+                data: {
+                    tenantId,
+                    orderId: created.id,
+                    userId: user.userId,
+                    eventType: "CREATED",
+                    fromStatus: null,
+                    toStatus: client_1.OrderStatus.OPEN,
+                    reason: null,
+                },
+            });
             return created;
         });
-        // 2) emite webhook fora da transação (não quebra o fluxo)
+        // webhook fora da transação
         try {
             await this.webhooks.queueEvent(tenantId, "order.created", {
                 order: {
@@ -414,6 +424,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
             status: client_1.OrderItemStatus.STAGED,
             ...(dto.itemIds?.length ? { id: { in: dto.itemIds } } : {}),
         };
+        // Itens STAGED a disparar
         const staged = await this.prisma.orderItem.findMany({
             where: whereItems,
             select: { id: true, productId: true, quantity: true },
@@ -421,25 +432,67 @@ let OrdersService = OrdersService_1 = class OrdersService {
         if (staged.length === 0) {
             return this.findOne(tenantId, orderId);
         }
+        // Calcula estoque a debitar
         const required = await this.computeRequiredInventory(tenantId, staged.map((s) => ({
             productId: s.productId,
             quantity: new client_1.Prisma.Decimal(s.quantity),
         })), this.prisma);
         await this.checkAndDebitInventorySerializable(tenantId, orderId, required);
-        await this.prisma.orderItem.updateMany({
-            where: { id: { in: staged.map((s) => s.id) } },
-            data: { status: client_1.OrderItemStatus.FIRED, firedAt: new Date() },
+        const now = new Date();
+        // Mapa de estação por produto
+        const prodIds = Array.from(new Set(staged.map((s) => s.productId)));
+        const prodStations = await this.prisma.product.findMany({
+            where: { tenantId, id: { in: prodIds } },
+            select: { id: true, prepStation: true },
         });
-        await this.prisma.order.update({
-            where: { id: orderId },
-            data: { assignedToUserId: user.userId, version: { increment: 1 } },
+        const stationByProduct = new Map(prodStations.map((p) => [p.id, p.prepStation ?? null]));
+        await this.prisma.$transaction(async (tx) => {
+            // Promove item a FIRED com estação específica
+            await Promise.all(staged.map((s) => tx.orderItem.update({
+                where: { id: s.id },
+                data: {
+                    status: client_1.OrderItemStatus.FIRED,
+                    station: stationByProduct.get(s.productId) ?? client_1.PrepStation.KITCHEN,
+                    firedAt: now,
+                },
+            })));
+            // Auditoria por item
+            await tx.orderItemEvent.createMany({
+                data: staged.map((s) => ({
+                    tenantId,
+                    orderItemId: s.id,
+                    userId: user.userId,
+                    eventType: "STATUS_CHANGE",
+                    fromStatus: client_1.OrderItemStatus.STAGED,
+                    toStatus: client_1.OrderItemStatus.FIRED,
+                    reason: `Fired at ${(stationByProduct.get(s.productId) ?? client_1.PrepStation.KITCHEN)}`,
+                })),
+            });
+            // Auditoria da ordem (itens disparados)
+            await tx.orderEvent.create({
+                data: {
+                    tenantId,
+                    orderId,
+                    userId: user.userId,
+                    eventType: "ITEMS_FIRED",
+                    fromStatus: null,
+                    toStatus: null,
+                    reason: `${staged.length} item(ns) fired`,
+                },
+            });
+            // Atribui operador e incrementa versão da comanda
+            await tx.order.update({
+                where: { id: orderId },
+                data: { assignedToUserId: user.userId, version: { increment: 1 } },
+            });
         });
-        // evento (não crítico)
+        // Webhook (não crítico)
         try {
             await this.webhooks.queueEvent(tenantId, "order.items_fired", {
                 orderId,
                 itemIds: staged.map((s) => s.id),
-            });
+                firedAt: now.toISOString(),
+            }, { deliverNow: true });
         }
         catch (e) {
             this.logger.warn(`Falha ao enfileirar webhook order.items_fired: ${String(e)}`);
@@ -489,6 +542,18 @@ let OrdersService = OrdersService_1 = class OrdersService {
                     voidApprovedBy: approver?.sub || null,
                 },
             });
+            // Auditoria do item VOID
+            await tx.orderItemEvent.create({
+                data: {
+                    tenantId,
+                    orderItemId: item.id,
+                    userId: user.userId,
+                    eventType: "STATUS_CHANGE",
+                    fromStatus: client_1.OrderItemStatus.FIRED,
+                    toStatus: client_1.OrderItemStatus.VOID,
+                    reason: dto.reason ?? "VOID",
+                },
+            });
             await this.recomputeOrderTotals(tenantId, orderId, tx);
         });
         // evento (não crítico)
@@ -503,7 +568,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
         }
         return this.findOne(tenantId, orderId);
     }
-    async cancel(tenantId, _user, orderId, ifMatch) {
+    async cancel(tenantId, user, orderId, ifMatch) {
         await this.assertIfMatch(tenantId, orderId, ifMatch);
         const order = await this.assertOrderInTenant(tenantId, orderId);
         if (order.status !== client_1.OrderStatus.OPEN) {
@@ -524,24 +589,34 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 where: { id: orderId },
                 data: { status: client_1.OrderStatus.CANCELED, version: { increment: 1 } },
             });
+            // Auditoria da ordem
+            await tx.orderEvent.create({
+                data: {
+                    tenantId,
+                    orderId,
+                    userId: user.userId,
+                    eventType: "STATUS_CHANGE",
+                    fromStatus: client_1.OrderStatus.OPEN,
+                    toStatus: client_1.OrderStatus.CANCELED,
+                    reason: "Order canceled",
+                },
+            });
             await this.recomputeOrderTotals(tenantId, orderId, tx);
             return tx.order.findFirst({
                 where: { id: orderId, tenantId },
                 include: { items: true },
             });
         });
-        // evento (não crítico)
+        // webhook (não crítico)
         try {
-            await this.webhooks.queueEvent(tenantId, "order.canceled", {
-                orderId,
-            });
+            await this.webhooks.queueEvent(tenantId, "order.canceled", { orderId });
         }
         catch (e) {
             this.logger.warn(`Falha ao enfileirar webhook order.canceled: ${String(e)}`);
         }
         return updated;
     }
-    async close(tenantId, _user, orderId, _dto, ifMatch) {
+    async close(tenantId, user, orderId, _dto, ifMatch) {
         await this.assertIfMatch(tenantId, orderId, ifMatch);
         const order = await this.assertOrderInTenant(tenantId, orderId);
         if (order.status !== client_1.OrderStatus.OPEN) {
@@ -553,19 +628,54 @@ let OrdersService = OrdersService_1 = class OrdersService {
         if (staged > 0) {
             throw new common_1.BadRequestException("Há itens STAGED. Remova-os ou faça FIRE antes de fechar.");
         }
+        const now = new Date();
         const result = await this.prisma.$transaction(async (tx) => {
-            await tx.orderItem.updateMany({
-                where: { tenantId, orderId, status: { in: [client_1.OrderItemStatus.FIRED] } },
-                data: { status: client_1.OrderItemStatus.CLOSED },
+            // Captura IDs dos itens FIRED antes de fechar (para auditoria)
+            const firedItems = await tx.orderItem.findMany({
+                where: { tenantId, orderId, status: client_1.OrderItemStatus.FIRED },
+                select: { id: true },
             });
+            // Fecha itens
+            await tx.orderItem.updateMany({
+                where: { tenantId, orderId, status: client_1.OrderItemStatus.FIRED },
+                data: { status: client_1.OrderItemStatus.CLOSED, closedAt: now },
+            });
+            // Auditoria dos itens fechados
+            if (firedItems.length > 0) {
+                await tx.orderItemEvent.createMany({
+                    data: firedItems.map((fi) => ({
+                        tenantId,
+                        orderItemId: fi.id,
+                        userId: user.userId,
+                        eventType: "STATUS_CHANGE",
+                        fromStatus: client_1.OrderItemStatus.FIRED,
+                        toStatus: client_1.OrderItemStatus.CLOSED,
+                        reason: "Item closed with order",
+                    })),
+                });
+            }
+            // Atualiza totais e fecha a ordem
             await this.recomputeOrderTotals(tenantId, orderId, tx);
-            return tx.order.update({
+            const updatedOrder = await tx.order.update({
                 where: { id: orderId },
                 data: { status: client_1.OrderStatus.CLOSED, version: { increment: 1 } },
                 include: { items: true },
             });
+            // Auditoria da ordem
+            await tx.orderEvent.create({
+                data: {
+                    tenantId,
+                    orderId,
+                    userId: user.userId,
+                    eventType: "STATUS_CHANGE",
+                    fromStatus: client_1.OrderStatus.OPEN,
+                    toStatus: client_1.OrderStatus.CLOSED,
+                    reason: "Order closed",
+                },
+            });
+            return updatedOrder;
         });
-        // evento (não crítico)
+        // webhook (não crítico)
         try {
             await this.webhooks.queueEvent(tenantId, "order.closed", {
                 orderId: result.id,

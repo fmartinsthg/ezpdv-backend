@@ -25,16 +25,16 @@ exports.AuthModule = AuthModule = __decorate([
             config_1.ConfigModule,
             users_module_1.UsersModule,
             // Passport com estratégia padrão jwt
-            passport_1.PassportModule.register({ defaultStrategy: 'jwt' }),
+            passport_1.PassportModule.register({ defaultStrategy: "jwt" }),
             // JwtModule assíncrono para pegar secret das envs
             jwt_1.JwtModule.registerAsync({
                 imports: [config_1.ConfigModule],
                 inject: [config_1.ConfigService],
                 useFactory: (config) => ({
-                    secret: config.get('JWT_SECRET') ??
-                        config.get('AUTH_JWT_SECRET') ??
-                        'ezpdv-secret', // fallback de dev
-                    signOptions: { expiresIn: '1d' },
+                    secret: config.get("JWT_SECRET") ??
+                        config.get("AUTH_JWT_SECRET") ??
+                        "ezpdv-secret", // fallback de dev
+                    signOptions: { expiresIn: "1d" },
                 }),
             }),
         ],

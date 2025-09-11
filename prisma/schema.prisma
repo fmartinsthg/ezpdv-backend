@@ -251,7 +251,7 @@ model Product {
   barcode     String?
   stock       Int     @default(0) // NOTA: Orders não altera este campo; usa InventoryItem
   isActive    Boolean @default(true)
-
+  prepStation PrepStation?
   categoryId String?
   category   Category? @relation(fields: [categoryId], references: [id])
 
@@ -267,6 +267,7 @@ model Product {
   @@unique([tenantId, barcode])
   @@index([tenantId, name])
   @@index([tenantId, barcode])
+  @@index([tenantId, prepStation])
   @@map("products")
 }
 
@@ -396,6 +397,7 @@ model OrderItem {
 
   status  OrderItemStatus @default(STAGED)
   station PrepStation?
+  closedAt DateTime?
 
   quantity  Decimal @db.Decimal(10, 3)
   unitPrice Decimal @db.Decimal(10, 2)
@@ -420,7 +422,7 @@ model OrderItem {
 
   // 🔽 Back-relations para eventos
   events OrderItemEvent[]
-
+  @@index([tenantId, status, closedAt])
   @@index([tenantId, orderId])
 }
 
@@ -678,7 +680,7 @@ model OrderEvent {
   reason     String?
   createdAt  DateTime    @default(now())
 
-  order  Order  @relation(fields: [orderId], references: [id])
+  order  Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
   tenant Tenant @relation(fields: [tenantId], references: [id])
   user   User   @relation(fields: [userId], references: [id])
 
@@ -690,13 +692,13 @@ model OrderItemEvent {
   tenantId    String
   orderItemId String
   userId      String
-  eventType   String // e.g. CREATED, STATUS_CHANGE, VOID
+  eventType   String // e.g. CREATED, STATUS_CHANGE, VOID, FIRED, CLOSED
   fromStatus  OrderItemStatus?
   toStatus    OrderItemStatus?
   reason      String?
   createdAt   DateTime         @default(now())
 
-  orderItem OrderItem @relation(fields: [orderItemId], references: [id])
+  orderItem OrderItem @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
   tenant    Tenant    @relation(fields: [tenantId], references: [id])
   user      User      @relation(fields: [userId], references: [id])
 

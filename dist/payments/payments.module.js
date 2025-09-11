@@ -16,12 +16,14 @@ const payments_approval_guard_1 = require("./payments.approval.guard");
 const null_gateway_1 = require("./gateway/null.gateway");
 const payment_gateway_interface_1 = require("./gateway/payment-gateway.interface");
 const idempotency_module_1 = require("../common/idempotency/idempotency.module");
+const webhooks_module_1 = require("../webhooks/webhooks.module");
+const auth_module_1 = require("../auth/auth.module");
 let PaymentsModule = class PaymentsModule {
 };
 exports.PaymentsModule = PaymentsModule;
 exports.PaymentsModule = PaymentsModule = __decorate([
     (0, common_1.Module)({
-        imports: [idempotency_module_1.IdempotencyModule],
+        imports: [auth_module_1.AuthModule, webhooks_module_1.WebhooksModule, idempotency_module_1.IdempotencyModule],
         controllers: [payments_controller_1.PaymentsController],
         providers: [
             prisma_service_1.PrismaService,
@@ -33,5 +35,6 @@ exports.PaymentsModule = PaymentsModule = __decorate([
                 useClass: null_gateway_1.NullGateway,
             },
         ],
+        exports: [payments_service_1.PaymentsService],
     })
 ], PaymentsModule);

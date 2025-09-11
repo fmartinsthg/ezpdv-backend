@@ -13,6 +13,7 @@ import {
   OrderStatus,
   OrderItemStatus,
   StockMovementType,
+  PrepStation,
 } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreateOrderDto } from "./dto/create-order.dto";
@@ -74,7 +75,7 @@ export class OrdersService {
   private async loadProductsMap(tenantId: string, productIds: string[]) {
     const products = await this.prisma.product.findMany({
       where: { tenantId, id: { in: productIds } },
-      select: { id: true, price: true, isActive: true },
+      select: { id: true, price: true, isActive: true, prepStation: true },
     });
     return new Map(products.map((p) => [p.id, p]));
   }
@@ -162,10 +163,7 @@ export class OrdersService {
           { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
         );
       } catch (e: any) {
-        if (
-          e?.code === "P2034" ||
-          String(e?.message || "").includes("could not serialize access")
-        ) {
+        if (e?.code === "P2034" || String(e?.message || "").includes("could not serialize access")) {
           if (++attempt >= MAX_RETRIES) throw e;
           await new Promise((r) => setTimeout(r, 50 * attempt));
           continue;
@@ -219,10 +217,7 @@ export class OrdersService {
           { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
         );
       } catch (e: any) {
-        if (
-          e?.code === "P2034" ||
-          String(e?.message || "").includes("could not serialize access")
-        ) {
+        if (e?.code === "P2034" || String(e?.message || "").includes("could not serialize access")) {
           if (++attempt >= MAX_RETRIES) throw e;
           await new Promise((r) => setTimeout(r, 50 * attempt));
           continue;
@@ -300,7 +295,7 @@ export class OrdersService {
 
     const total = subtotal;
 
-    // 1) cria a ordem (transação)
+    // cria a ordem (transação)
     const order = await this.prisma.$transaction(async (tx) => {
       const created = await tx.order.create({
         data: {
@@ -317,22 +312,41 @@ export class OrdersService {
         },
         include: { items: true },
       });
+
+      // auditoria da criação
+      await tx.orderEvent.create({
+        data: {
+          tenantId,
+          orderId: created.id,
+          userId: user.userId,
+          eventType: "CREATED",
+          fromStatus: null,
+          toStatus: OrderStatus.OPEN,
+          reason: null,
+        },
+      });
+
       return created;
     });
 
-    // 2) emite webhook fora da transação (não quebra o fluxo)
+    // webhook fora da transação
     try {
-      await this.webhooks.queueEvent(tenantId, "order.created", {
-        order: {
-          id: order.id,
-          status: order.status,
-          tabNumber: order.tabNumber,
-          subtotal: order.subtotal,
-          total: order.total,
-          isSettled: order.isSettled ?? false,
-          createdAt: order.createdAt,
+      await this.webhooks.queueEvent(
+        tenantId,
+        "order.created",
+        {
+          order: {
+            id: order.id,
+            status: order.status,
+            tabNumber: order.tabNumber,
+            subtotal: order.subtotal,
+            total: order.total,
+            isSettled: order.isSettled ?? false,
+            createdAt: order.createdAt,
+          },
         },
-      }, { deliverNow: true });
+        { deliverNow: true }
+      );
     } catch (err) {
       this.logger.warn(`Falha ao enfileirar webhook order.created: ${String(err)}`);
     }
@@ -495,15 +509,16 @@ export class OrdersService {
       ...(dto.itemIds?.length ? { id: { in: dto.itemIds } } : {}),
     };
 
+    // Itens STAGED a disparar
     const staged = await this.prisma.orderItem.findMany({
       where: whereItems,
       select: { id: true, productId: true, quantity: true },
     });
-
     if (staged.length === 0) {
       return this.findOne(tenantId, orderId);
     }
 
+    // Calcula estoque a debitar
     const required = await this.computeRequiredInventory(
       tenantId,
       staged.map((s) => ({
@@ -512,25 +527,80 @@ export class OrdersService {
       })),
       this.prisma
     );
-
     await this.checkAndDebitInventorySerializable(tenantId, orderId, required);
 
-    await this.prisma.orderItem.updateMany({
-      where: { id: { in: staged.map((s) => s.id) } },
-      data: { status: OrderItemStatus.FIRED, firedAt: new Date() },
-    });
+    const now = new Date();
 
-    await this.prisma.order.update({
-      where: { id: orderId },
-      data: { assignedToUserId: user.userId, version: { increment: 1 } },
+    // Mapa de estação por produto
+    const prodIds = Array.from(new Set(staged.map((s) => s.productId)));
+    const prodStations = await this.prisma.product.findMany({
+      where: { tenantId, id: { in: prodIds } },
+      select: { id: true, prepStation: true },
     });
+    const stationByProduct = new Map<string, PrepStation | null>(
+      prodStations.map((p) => [p.id, (p.prepStation as PrepStation | null) ?? null])
+    );
 
-    // evento (não crítico)
-    try {
-      await this.webhooks.queueEvent(tenantId, "order.items_fired", {
-        orderId,
-        itemIds: staged.map((s) => s.id),
+    await this.prisma.$transaction(async (tx) => {
+      // Promove item a FIRED com estação específica
+      await Promise.all(
+        staged.map((s) =>
+          tx.orderItem.update({
+            where: { id: s.id },
+            data: {
+              status: OrderItemStatus.FIRED,
+              station: stationByProduct.get(s.productId) ?? PrepStation.KITCHEN,
+              firedAt: now,
+            },
+          })
+        )
+      );
+
+      // Auditoria por item
+      await tx.orderItemEvent.createMany({
+        data: staged.map((s) => ({
+          tenantId,
+          orderItemId: s.id,
+          userId: user.userId,
+          eventType: "STATUS_CHANGE",
+          fromStatus: OrderItemStatus.STAGED,
+          toStatus: OrderItemStatus.FIRED,
+          reason: `Fired at ${(stationByProduct.get(s.productId) ?? PrepStation.KITCHEN)}`,
+        })),
       });
+
+      // Auditoria da ordem (itens disparados)
+      await tx.orderEvent.create({
+        data: {
+          tenantId,
+          orderId,
+          userId: user.userId,
+          eventType: "ITEMS_FIRED",
+          fromStatus: null,
+          toStatus: null,
+          reason: `${staged.length} item(ns) fired`,
+        },
+      });
+
+      // Atribui operador e incrementa versão da comanda
+      await tx.order.update({
+        where: { id: orderId },
+        data: { assignedToUserId: user.userId, version: { increment: 1 } },
+      });
+    });
+
+    // Webhook (não crítico)
+    try {
+      await this.webhooks.queueEvent(
+        tenantId,
+        "order.items_fired",
+        {
+          orderId,
+          itemIds: staged.map((s) => s.id),
+          firedAt: now.toISOString(),
+        },
+        { deliverNow: true }
+      );
     } catch (e) {
       this.logger.warn(`Falha ao enfileirar webhook order.items_fired: ${String(e)}`);
     }
@@ -594,6 +664,19 @@ export class OrdersService {
         },
       });
 
+      // Auditoria do item VOID
+      await tx.orderItemEvent.create({
+        data: {
+          tenantId,
+          orderItemId: item.id,
+          userId: user.userId,
+          eventType: "STATUS_CHANGE",
+          fromStatus: OrderItemStatus.FIRED,
+          toStatus: OrderItemStatus.VOID,
+          reason: dto.reason ?? "VOID",
+        },
+      });
+
       await this.recomputeOrderTotals(tenantId, orderId, tx);
     });
 
@@ -610,7 +693,7 @@ export class OrdersService {
     return this.findOne(tenantId, orderId);
   }
 
-  async cancel(tenantId: string, _user: AuthUser, orderId: string, ifMatch?: string) {
+  async cancel(tenantId: string, user: AuthUser, orderId: string, ifMatch?: string) {
     await this.assertIfMatch(tenantId, orderId, ifMatch);
 
     const order = await this.assertOrderInTenant(tenantId, orderId);
@@ -637,6 +720,19 @@ export class OrdersService {
         data: { status: OrderStatus.CANCELED, version: { increment: 1 } },
       });
 
+      // Auditoria da ordem
+      await tx.orderEvent.create({
+        data: {
+          tenantId,
+          orderId,
+          userId: user.userId,
+          eventType: "STATUS_CHANGE",
+          fromStatus: OrderStatus.OPEN,
+          toStatus: OrderStatus.CANCELED,
+          reason: "Order canceled",
+        },
+      });
+
       await this.recomputeOrderTotals(tenantId, orderId, tx);
 
       return tx.order.findFirst({
@@ -645,11 +741,9 @@ export class OrdersService {
       });
     });
 
-    // evento (não crítico)
+    // webhook (não crítico)
     try {
-      await this.webhooks.queueEvent(tenantId, "order.canceled", {
-        orderId,
-      });
+      await this.webhooks.queueEvent(tenantId, "order.canceled", { orderId });
     } catch (e) {
       this.logger.warn(`Falha ao enfileirar webhook order.canceled: ${String(e)}`);
     }
@@ -659,7 +753,7 @@ export class OrdersService {
 
   async close(
     tenantId: string,
-    _user: AuthUser,
+    user: AuthUser,
     orderId: string,
     _dto: CloseOrderDto,
     ifMatch?: string
@@ -678,29 +772,74 @@ export class OrdersService {
       throw new BadRequestException("Há itens STAGED. Remova-os ou faça FIRE antes de fechar.");
     }
 
+    const now = new Date();
+
     const result = await this.prisma.$transaction(async (tx) => {
-      await tx.orderItem.updateMany({
-        where: { tenantId, orderId, status: { in: [OrderItemStatus.FIRED] } },
-        data: { status: OrderItemStatus.CLOSED },
+      // Captura IDs dos itens FIRED antes de fechar (para auditoria)
+      const firedItems = await tx.orderItem.findMany({
+        where: { tenantId, orderId, status: OrderItemStatus.FIRED },
+        select: { id: true },
       });
 
+      // Fecha itens
+      await tx.orderItem.updateMany({
+        where: { tenantId, orderId, status: OrderItemStatus.FIRED },
+        data: { status: OrderItemStatus.CLOSED, closedAt: now },
+      });
+
+      // Auditoria dos itens fechados
+      if (firedItems.length > 0) {
+        await tx.orderItemEvent.createMany({
+          data: firedItems.map((fi) => ({
+            tenantId,
+            orderItemId: fi.id,
+            userId: user.userId,
+            eventType: "STATUS_CHANGE",
+            fromStatus: OrderItemStatus.FIRED,
+            toStatus: OrderItemStatus.CLOSED,
+            reason: "Item closed with order",
+          })),
+        });
+      }
+
+      // Atualiza totais e fecha a ordem
       await this.recomputeOrderTotals(tenantId, orderId, tx);
 
-      return tx.order.update({
+      const updatedOrder = await tx.order.update({
         where: { id: orderId },
         data: { status: OrderStatus.CLOSED, version: { increment: 1 } },
         include: { items: true },
       });
+
+      // Auditoria da ordem
+      await tx.orderEvent.create({
+        data: {
+          tenantId,
+          orderId,
+          userId: user.userId,
+          eventType: "STATUS_CHANGE",
+          fromStatus: OrderStatus.OPEN,
+          toStatus: OrderStatus.CLOSED,
+          reason: "Order closed",
+        },
+      });
+
+      return updatedOrder;
     });
 
-    // evento (não crítico)
+    // webhook (não crítico)
     try {
-      await this.webhooks.queueEvent(tenantId, "order.closed", {
-        orderId: result.id,
-        subtotal: result.subtotal,
-        total: result.total,
-        closedAt: result.updatedAt,
-      }, { deliverNow: true });
+      await this.webhooks.queueEvent(
+        tenantId,
+        "order.closed",
+        {
+          orderId: result.id,
+          subtotal: result.subtotal,
+          total: result.total,
+          closedAt: result.updatedAt,
+        },
+        { deliverNow: true }
+      );
     } catch (e) {
       this.logger.warn(`Falha ao enfileirar webhook order.closed: ${String(e)}`);
     }
