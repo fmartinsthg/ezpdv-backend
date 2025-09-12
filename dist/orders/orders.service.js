@@ -29,7 +29,10 @@ let OrdersService = OrdersService_1 = class OrdersService {
     parseIfMatch(ifMatch) {
         if (!ifMatch)
             return null;
-        const cleaned = String(ifMatch).trim().replace(/^W\/"?/, "").replace(/"$/, "");
+        const cleaned = String(ifMatch)
+            .trim()
+            .replace(/^W\/"?/, "")
+            .replace(/"$/, "");
         const n = Number(cleaned);
         return Number.isFinite(n) ? Math.trunc(n) : null;
     }
@@ -62,7 +65,9 @@ let OrdersService = OrdersService_1 = class OrdersService {
         return new Map(products.map((p) => [p.id, p]));
     }
     async assertOrderInTenant(tenantId, id) {
-        const order = await this.prisma.order.findFirst({ where: { id, tenantId } });
+        const order = await this.prisma.order.findFirst({
+            where: { id, tenantId },
+        });
         if (!order)
             throw new common_1.NotFoundException("Comanda não encontrada.");
         return order;
@@ -126,7 +131,8 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 }, { isolationLevel: client_1.Prisma.TransactionIsolationLevel.Serializable });
             }
             catch (e) {
-                if (e?.code === "P2034" || String(e?.message || "").includes("could not serialize access")) {
+                if (e?.code === "P2034" ||
+                    String(e?.message || "").includes("could not serialize access")) {
                     if (++attempt >= MAX_RETRIES)
                         throw e;
                     await new Promise((r) => setTimeout(r, 50 * attempt));
@@ -171,7 +177,8 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 }, { isolationLevel: client_1.Prisma.TransactionIsolationLevel.Serializable });
             }
             catch (e) {
-                if (e?.code === "P2034" || String(e?.message || "").includes("could not serialize access")) {
+                if (e?.code === "P2034" ||
+                    String(e?.message || "").includes("could not serialize access")) {
                     if (++attempt >= MAX_RETRIES)
                         throw e;
                     await new Promise((r) => setTimeout(r, 50 * attempt));
@@ -188,7 +195,13 @@ let OrdersService = OrdersService_1 = class OrdersService {
             where: {
                 tenantId,
                 orderId,
-                status: { in: [client_1.OrderItemStatus.STAGED, client_1.OrderItemStatus.FIRED, client_1.OrderItemStatus.CLOSED] },
+                status: {
+                    in: [
+                        client_1.OrderItemStatus.STAGED,
+                        client_1.OrderItemStatus.FIRED,
+                        client_1.OrderItemStatus.CLOSED,
+                    ],
+                },
             },
             _sum: { total: true },
         });
@@ -224,7 +237,9 @@ let OrdersService = OrdersService_1 = class OrdersService {
             const p = prodMap.get(it.productId);
             if (!p.isActive)
                 throw new common_1.BadRequestException("Produto inativo.");
-            const unitPrice = it.unitPrice !== undefined ? this.toDecimal(it.unitPrice) : new client_1.Prisma.Decimal(p.price);
+            const unitPrice = it.unitPrice !== undefined
+                ? this.toDecimal(it.unitPrice)
+                : new client_1.Prisma.Decimal(p.price);
             const qty = new client_1.Prisma.Decimal(it.quantity);
             if (unitPrice.lte(0))
                 throw new common_1.BadRequestException("unitPrice deve ser maior que zero.");
@@ -359,7 +374,9 @@ let OrdersService = OrdersService_1 = class OrdersService {
             const p = prodMap.get(it.productId);
             if (!p.isActive)
                 throw new common_1.BadRequestException("Produto inativo.");
-            const unitPrice = it.unitPrice !== undefined ? this.toDecimal(it.unitPrice) : new client_1.Prisma.Decimal(p.price);
+            const unitPrice = it.unitPrice !== undefined
+                ? this.toDecimal(it.unitPrice)
+                : new client_1.Prisma.Decimal(p.price);
             const qty = new client_1.Prisma.Decimal(it.quantity);
             if (unitPrice.lte(0))
                 throw new common_1.BadRequestException("unitPrice deve ser maior que zero.");
@@ -383,7 +400,13 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 where: {
                     orderId,
                     tenantId,
-                    status: { in: [client_1.OrderItemStatus.STAGED, client_1.OrderItemStatus.FIRED, client_1.OrderItemStatus.CLOSED] },
+                    status: {
+                        in: [
+                            client_1.OrderItemStatus.STAGED,
+                            client_1.OrderItemStatus.FIRED,
+                            client_1.OrderItemStatus.CLOSED,
+                        ],
+                    },
                 },
                 _sum: { total: true },
             });
@@ -427,7 +450,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
         // Itens STAGED a disparar
         const staged = await this.prisma.orderItem.findMany({
             where: whereItems,
-            select: { id: true, productId: true, quantity: true },
+            include: { product: { select: { prepStation: true } } },
         });
         if (staged.length === 0) {
             return this.findOne(tenantId, orderId);
@@ -445,18 +468,19 @@ let OrdersService = OrdersService_1 = class OrdersService {
             where: { tenantId, id: { in: prodIds } },
             select: { id: true, prepStation: true },
         });
-        const stationByProduct = new Map(prodStations.map((p) => [p.id, p.prepStation ?? null]));
+        const stationByProduct = new Map(prodStations.map((p) => [
+            p.id,
+            p.prepStation ?? null,
+        ]));
         await this.prisma.$transaction(async (tx) => {
-            // Promove item a FIRED com estação específica
             await Promise.all(staged.map((s) => tx.orderItem.update({
                 where: { id: s.id },
                 data: {
                     status: client_1.OrderItemStatus.FIRED,
-                    station: stationByProduct.get(s.productId) ?? client_1.PrepStation.KITCHEN,
+                    station: s.product?.prepStation ?? client_1.PrepStation.KITCHEN,
                     firedAt: now,
                 },
             })));
-            // Auditoria por item
             await tx.orderItemEvent.createMany({
                 data: staged.map((s) => ({
                     tenantId,
@@ -465,22 +489,18 @@ let OrdersService = OrdersService_1 = class OrdersService {
                     eventType: "STATUS_CHANGE",
                     fromStatus: client_1.OrderItemStatus.STAGED,
                     toStatus: client_1.OrderItemStatus.FIRED,
-                    reason: `Fired at ${(stationByProduct.get(s.productId) ?? client_1.PrepStation.KITCHEN)}`,
+                    reason: `Fired at ${s.product?.prepStation ?? client_1.PrepStation.KITCHEN}`,
                 })),
             });
-            // Auditoria da ordem (itens disparados)
             await tx.orderEvent.create({
                 data: {
                     tenantId,
                     orderId,
                     userId: user.userId,
                     eventType: "ITEMS_FIRED",
-                    fromStatus: null,
-                    toStatus: null,
                     reason: `${staged.length} item(ns) fired`,
                 },
             });
-            // Atribui operador e incrementa versão da comanda
             await tx.order.update({
                 where: { id: orderId },
                 data: { assignedToUserId: user.userId, version: { increment: 1 } },
@@ -529,7 +549,12 @@ let OrdersService = OrdersService_1 = class OrdersService {
         if (item.status !== client_1.OrderItemStatus.FIRED) {
             throw new common_1.BadRequestException("Somente itens FIRED podem ser anulados (VOID).");
         }
-        const toCredit = await this.computeRequiredInventory(tenantId, [{ productId: item.productId, quantity: new client_1.Prisma.Decimal(item.quantity) }], this.prisma);
+        const toCredit = await this.computeRequiredInventory(tenantId, [
+            {
+                productId: item.productId,
+                quantity: new client_1.Prisma.Decimal(item.quantity),
+            },
+        ], this.prisma);
         await this.creditInventorySerializable(tenantId, orderId, toCredit);
         await this.prisma.$transaction(async (tx) => {
             await tx.orderItem.update({

@@ -10,10 +10,13 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.UpdateProductDto = void 0;
+// src/products/dto/update-product.dto.ts
 const swagger_1 = require("@nestjs/swagger");
 const create_product_dto_1 = require("./create-product.dto");
 const class_validator_1 = require("class-validator");
-class UpdateProductDto extends (0, swagger_1.PartialType)(create_product_dto_1.CreateProductDto) {
+const class_transformer_1 = require("class-transformer");
+const client_1 = require("@prisma/client");
+class UpdateProductDto extends (0, swagger_1.PartialType)((0, swagger_1.OmitType)(create_product_dto_1.CreateProductDto, ["prepStation"])) {
 }
 exports.UpdateProductDto = UpdateProductDto;
 __decorate([
@@ -23,3 +26,14 @@ __decorate([
     ,
     __metadata("design:type", Boolean)
 ], UpdateProductDto.prototype, "isActive", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({
+        enum: client_1.PrepStation,
+        example: "KITCHEN",
+        nullable: true,
+    }),
+    (0, class_validator_1.IsEnum)(client_1.PrepStation),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_transformer_1.Transform)(({ value }) => value === null ? null : value ? String(value).toUpperCase() : value),
+    __metadata("design:type", Object)
+], UpdateProductDto.prototype, "prepStation", void 0);

@@ -105,17 +105,20 @@ let ProductsService = class ProductsService {
         try {
             return await this.prisma.product.create({
                 data: {
-                    tenantId, // obrigatório no multi-tenant
+                    tenantId,
                     name: data.name,
                     description: data.description,
                     price: new client_1.Prisma.Decimal(typeof data.price === "string" ? data.price : String(data.price)),
-                    // `cost` é opcional em alguns contextos — ajuste conforme seu DTO
                     cost: data.cost !== undefined
                         ? new client_1.Prisma.Decimal(typeof data.cost === "string" ? data.cost : String(data.cost))
                         : new client_1.Prisma.Decimal("0"),
-                    stock: typeof data.stock === "string" ? Number(data.stock) : data.stock,
+                    stock: typeof data.stock === "string"
+                        ? Number(data.stock)
+                        : data.stock,
                     categoryId: data.categoryId,
                     isActive: true,
+                    // 👇 novo
+                    prepStation: data.prepStation ?? null,
                 },
                 include: { category: { select: { id: true, name: true } } },
             });
@@ -160,6 +163,10 @@ let ProductsService = class ProductsService {
                         : data.stock
                     : undefined,
                 ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
+                // 👇 novo: só toca no campo se vier no DTO
+                ...(data.prepStation !== undefined
+                    ? { prepStation: data.prepStation }
+                    : {}),
             };
             if (data.categoryId !== undefined) {
                 payload.category = data.categoryId

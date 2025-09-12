@@ -12,6 +12,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.CreateProductDto = void 0;
 const class_validator_1 = require("class-validator");
 const swagger_1 = require("@nestjs/swagger");
+const class_transformer_1 = require("class-transformer");
+const client_1 = require("@prisma/client");
 const DECIMAL_REGEX = /^-?\d+(\.\d+)?$/; // aceita "55", "55.0", "55.00"
 class CreateProductDto {
 }
@@ -70,3 +72,14 @@ __decorate([
     (0, swagger_1.ApiProperty)({ example: "uuid-v4", description: "ID da categoria" }),
     __metadata("design:type", String)
 ], CreateProductDto.prototype, "categoryId", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({
+        enum: client_1.PrepStation,
+        example: "BAR",
+        description: "Estação padrão de preparo para roteamento no KDS",
+    }),
+    (0, class_validator_1.IsEnum)(client_1.PrepStation),
+    (0, class_validator_1.IsOptional)(),
+    (0, class_transformer_1.Transform)(({ value }) => (value ? String(value).toUpperCase() : value)),
+    __metadata("design:type", String)
+], CreateProductDto.prototype, "prepStation", void 0);

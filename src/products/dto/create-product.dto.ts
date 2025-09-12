@@ -4,8 +4,11 @@ import {
   IsOptional,
   Matches,
   IsUUID,
+  IsEnum,
 } from "class-validator";
-import { ApiProperty } from "@nestjs/swagger";
+import { ApiProperty, ApiPropertyOptional } from "@nestjs/swagger";
+import { Transform } from "class-transformer";
+import { PrepStation } from "@prisma/client";
 
 const DECIMAL_REGEX = /^-?\d+(\.\d+)?$/; // aceita "55", "55.0", "55.00"
 
@@ -57,4 +60,15 @@ export class CreateProductDto {
   @IsUUID("4", { message: "categoryId deve ser um UUID v4 válido." })
   @ApiProperty({ example: "uuid-v4", description: "ID da categoria" })
   categoryId!: string;
+
+  // 👇 novo: estação de preparo opcional
+  @ApiPropertyOptional({
+    enum: PrepStation,
+    example: "BAR",
+    description: "Estação padrão de preparo para roteamento no KDS",
+  })
+  @IsEnum(PrepStation)
+  @IsOptional()
+  @Transform(({ value }) => (value ? String(value).toUpperCase() : value))
+  prepStation?: PrepStation;
 }

@@ -17,10 +17,12 @@ class KdsListTicketsQueryDto {
 }
 exports.KdsListTicketsQueryDto = KdsListTicketsQueryDto;
 __decorate([
+    (0, class_transformer_1.Transform)(({ value }) => String(value).toUpperCase()),
     (0, class_validator_1.IsEnum)(client_1.PrepStation),
     __metadata("design:type", String)
 ], KdsListTicketsQueryDto.prototype, "station", void 0);
 __decorate([
+    (0, class_transformer_1.Transform)(({ value }) => value == null ? value : String(value).toUpperCase()),
     (0, class_validator_1.IsEnum)(client_1.OrderItemStatus),
     (0, class_validator_1.IsOptional)(),
     __metadata("design:type", String)
@@ -48,14 +50,21 @@ class KdsListItemsQueryDto {
 }
 exports.KdsListItemsQueryDto = KdsListItemsQueryDto;
 __decorate([
+    (0, class_transformer_1.Transform)(({ value }) => String(value).toUpperCase()),
     (0, class_validator_1.IsEnum)(client_1.PrepStation),
     __metadata("design:type", String)
 ], KdsListItemsQueryDto.prototype, "station", void 0);
 __decorate([
+    (0, class_transformer_1.Transform)(({ value }) => value == null ? value : String(value).toUpperCase()),
     (0, class_validator_1.IsEnum)(client_1.OrderItemStatus),
     (0, class_validator_1.IsOptional)(),
     __metadata("design:type", String)
 ], KdsListItemsQueryDto.prototype, "status", void 0);
+__decorate([
+    (0, class_validator_1.IsISO8601)(),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", String)
+], KdsListItemsQueryDto.prototype, "since", void 0);
 __decorate([
     (0, class_transformer_1.Transform)(({ value }) => parseInt(value, 10)),
     (0, class_validator_1.IsInt)(),

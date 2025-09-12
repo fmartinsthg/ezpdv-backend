@@ -424,6 +424,8 @@ model OrderItem {
   events OrderItemEvent[]
   @@index([tenantId, status, closedAt])
   @@index([tenantId, orderId])
+  @@index([tenantId, station, status, firedAt, updatedAt])
+  @@index([tenantId, station, status, voidedAt, firedAt, updatedAt], name: "idx_kds_items")
 }
 
 model Payment {

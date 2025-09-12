@@ -3,20 +3,24 @@ import {
   IsInt,
   IsISO8601,
   IsOptional,
-  IsString,
   Min,
   ArrayNotEmpty,
+  IsString,
 } from "class-validator";
 import { Transform } from "class-transformer";
 import { PrepStation, OrderItemStatus } from "@prisma/client";
 
 export class KdsListTicketsQueryDto {
+  @Transform(({ value }) => String(value).toUpperCase())
   @IsEnum(PrepStation)
-  station!: PrepStation; // definite assignment
+  station!: PrepStation;
 
+  @Transform(({ value }) =>
+    value == null ? value : String(value).toUpperCase()
+  )
   @IsEnum(OrderItemStatus)
   @IsOptional()
-  status?: OrderItemStatus; // default aplicado no controller
+  status?: OrderItemStatus;
 
   @IsISO8601()
   @IsOptional()
@@ -36,12 +40,20 @@ export class KdsListTicketsQueryDto {
 }
 
 export class KdsListItemsQueryDto {
+  @Transform(({ value }) => String(value).toUpperCase())
   @IsEnum(PrepStation)
   station!: PrepStation;
 
+  @Transform(({ value }) =>
+    value == null ? value : String(value).toUpperCase()
+  )
   @IsEnum(OrderItemStatus)
   @IsOptional()
   status?: OrderItemStatus;
+
+  @IsISO8601()
+  @IsOptional()
+  since?: string; // 👈 agora também disponível no /kds/items
 
   @Transform(({ value }) => parseInt(value, 10))
   @IsInt()
