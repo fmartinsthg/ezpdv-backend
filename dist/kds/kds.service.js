@@ -15,13 +15,16 @@ const prisma_service_1 = require("../prisma/prisma.service");
 const client_1 = require("@prisma/client");
 const webhooks_service_1 = require("../webhooks/webhooks.service");
 const cash_window_port_1 = require("./ports/cash-window.port");
+const kds_bus_1 = require("./kds.bus"); // 👈 SSE bus
 const DEFAULT_PAGE = 1;
 const DEFAULT_SIZE = 50;
 let KdsService = class KdsService {
-    constructor(prisma, webhooks, cash) {
+    constructor(prisma, webhooks, cash, bus // 👈 injeta o bus
+    ) {
         this.prisma = prisma;
         this.webhooks = webhooks;
         this.cash = cash;
+        this.bus = bus;
     }
     /* -------------------------- helpers -------------------------- */
     pg({ page, pageSize }) {
@@ -33,7 +36,10 @@ let KdsService = class KdsService {
     parseIfMatch(ifMatch) {
         if (!ifMatch)
             return null;
-        const cleaned = String(ifMatch).trim().replace(/^W\/"?/, "").replace(/"$/, "");
+        const cleaned = String(ifMatch)
+            .trim()
+            .replace(/^W\/"?/, "")
+            .replace(/"$/, "");
         const n = Number(cleaned);
         return Number.isFinite(n) ? Math.trunc(n) : null;
     }
@@ -50,8 +56,18 @@ let KdsService = class KdsService {
             },
         };
     }
-    /* -------------------------- queries -------------------------- */
-    async listTickets(tenantId, station, status = client_1.OrderItemStatus.FIRED, sinceISO, opts) {
+    async listTickets(tenantId, station, status = client_1.OrderItemStatus.FIRED, sinceOrOpts, maybeOpts) {
+        let sinceISO;
+        let opts;
+        if (typeof sinceOrOpts === "string" || sinceOrOpts === undefined) {
+            sinceISO = sinceOrOpts;
+            opts = maybeOpts;
+        }
+        else {
+            // chamada sem sinceISO: 4º argumento é o objeto de paginação
+            sinceISO = undefined;
+            opts = sinceOrOpts;
+        }
         const { skip, take, page, pageSize } = this.pg(opts ?? {});
         const since = sinceISO ? new Date(sinceISO) : undefined;
         const stationEnum = String(station).toUpperCase();
@@ -114,7 +130,17 @@ let KdsService = class KdsService {
         }
         return { items: Array.from(ticketsMap.values()), total, page, pageSize };
     }
-    async listItems(tenantId, station, status = client_1.OrderItemStatus.FIRED, sinceISO, opts) {
+    async listItems(tenantId, station, status = client_1.OrderItemStatus.FIRED, sinceOrOpts, maybeOpts) {
+        let sinceISO;
+        let opts;
+        if (typeof sinceOrOpts === "string" || sinceOrOpts === undefined) {
+            sinceISO = sinceOrOpts;
+            opts = maybeOpts;
+        }
+        else {
+            sinceISO = undefined;
+            opts = sinceOrOpts;
+        }
         const { skip, take, page, pageSize } = this.pg(opts ?? {});
         const since = sinceISO ? new Date(sinceISO) : undefined;
         const stationEnum = String(station).toUpperCase();
@@ -200,7 +226,18 @@ let KdsService = class KdsService {
             });
             return up;
         });
-        // webhook não-crítico
+        // SSE: notifica item.closed
+        this.bus.publish({
+            type: "item.closed",
+            tenantId,
+            orderId: updated.orderId,
+            itemId: updated.id,
+            station: (item.station ??
+                updated.station ??
+                client_1.PrepStation.KITCHEN),
+            at: now.toISOString(),
+        });
+        // webhook (não crítico)
         try {
             await this.webhooks.queueEvent(tenantId, "order.item.closed", { orderId: updated.orderId, itemId: updated.id, by: "KDS" }, { deliverNow: true });
         }
@@ -219,7 +256,7 @@ let KdsService = class KdsService {
                     status: client_1.OrderItemStatus.FIRED,
                     voidedAt: null,
                 },
-                select: { id: true, orderId: true },
+                select: { id: true, orderId: true, station: true }, // 👈 pega station para SSE
             });
             if (items.length === 0)
                 return { affected: 0, perOrder: {} };
@@ -259,14 +296,27 @@ let KdsService = class KdsService {
                     },
                 });
             }
-            return { affected: items.length, perOrder };
+            return { affected: items.length, perOrder, items };
         });
-        // webhook não-crítico
+        // SSE: notifica vários item.closed
+        for (const it of updated.items ?? []) {
+            this.bus.publish({
+                type: "item.closed",
+                tenantId,
+                orderId: it.orderId,
+                itemId: it.id,
+                station: (it.station ?? client_1.PrepStation.KITCHEN),
+                at: now.toISOString(),
+            });
+        }
+        // webhook (não crítico)
         try {
             await this.webhooks.queueEvent(tenantId, "order.kds.bulk_closed", { affected: updated.affected }, { deliverNow: true });
         }
         catch (_) { }
-        return updated;
+        // remove `items` do payload externo
+        const { items, ...rest } = updated;
+        return rest;
     }
     async bumpTicket(tenantId, orderId, ifMatch, actorUserId) {
         const expected = this.parseIfMatch(ifMatch);
@@ -285,13 +335,23 @@ let KdsService = class KdsService {
         const now = new Date();
         const updated = await this.prisma.$transaction(async (tx) => {
             const items = await tx.orderItem.findMany({
-                where: { tenantId, orderId, status: client_1.OrderItemStatus.FIRED, voidedAt: null },
+                where: {
+                    tenantId,
+                    orderId,
+                    status: client_1.OrderItemStatus.FIRED,
+                    voidedAt: null,
+                },
                 select: { id: true },
             });
             if (items.length === 0)
                 return { orderVersion: order.version, affected: 0 };
             await tx.orderItem.updateMany({
-                where: { tenantId, orderId, status: client_1.OrderItemStatus.FIRED, voidedAt: null },
+                where: {
+                    tenantId,
+                    orderId,
+                    status: client_1.OrderItemStatus.FIRED,
+                    voidedAt: null,
+                },
                 data: { status: client_1.OrderItemStatus.CLOSED, closedAt: now },
             });
             await tx.orderEvent.create({
@@ -318,7 +378,15 @@ let KdsService = class KdsService {
             }
             return { orderVersion: order.version, affected: items.length };
         });
-        // webhook não-crítico
+        // SSE: notifica ticket.bumped
+        this.bus.publish({
+            type: "ticket.bumped",
+            tenantId,
+            orderId,
+            affected: updated.affected,
+            at: now.toISOString(),
+        });
+        // webhook (não crítico)
         try {
             await this.webhooks.queueEvent(tenantId, "order.kds.bumped", { orderId, affected: updated.affected }, { deliverNow: true });
         }
@@ -327,14 +395,24 @@ let KdsService = class KdsService {
     }
     async recallTicket(tenantId, orderId, actorUserId) {
         const closed = await this.prisma.orderItem.findMany({
-            where: { tenantId, orderId, status: client_1.OrderItemStatus.CLOSED, voidedAt: null },
-            select: { id: true },
+            where: {
+                tenantId,
+                orderId,
+                status: client_1.OrderItemStatus.CLOSED,
+                voidedAt: null,
+            },
+            select: { id: true, station: true }, // 👈 pega station para SSE de item.fired
         });
         if (closed.length === 0)
             return { affected: 0 };
         const res = await this.prisma.$transaction(async (tx) => {
             await tx.orderItem.updateMany({
-                where: { tenantId, orderId, status: client_1.OrderItemStatus.CLOSED, voidedAt: null },
+                where: {
+                    tenantId,
+                    orderId,
+                    status: client_1.OrderItemStatus.CLOSED,
+                    voidedAt: null,
+                },
                 data: { status: client_1.OrderItemStatus.FIRED, closedAt: null },
             });
             await tx.orderEvent.create({
@@ -361,7 +439,27 @@ let KdsService = class KdsService {
             }
             return { affected: closed.length };
         });
-        // webhook não-crítico
+        const now = new Date();
+        // SSE: notifica ticket.recalled
+        this.bus.publish({
+            type: "ticket.recalled",
+            tenantId,
+            orderId,
+            affected: res.affected,
+            at: now.toISOString(),
+        });
+        // (opcional) também emitir item.fired para cada item reaberto
+        for (const it of closed) {
+            this.bus.publish({
+                type: "item.fired",
+                tenantId,
+                orderId,
+                itemId: it.id,
+                station: (it.station ?? client_1.PrepStation.KITCHEN),
+                at: now.toISOString(),
+            });
+        }
+        // webhook (não crítico)
         try {
             await this.webhooks.queueEvent(tenantId, "order.kds.recalled", { orderId, affected: res.affected }, { deliverNow: true });
         }
@@ -374,5 +472,7 @@ exports.KdsService = KdsService = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         webhooks_service_1.WebhooksService,
-        cash_window_port_1.CashWindowPort])
+        cash_window_port_1.CashWindowPort,
+        kds_bus_1.KdsBus // 👈 injeta o bus
+    ])
 ], KdsService);

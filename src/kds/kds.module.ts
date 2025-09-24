@@ -6,6 +6,7 @@ import { WebhooksModule } from "../webhooks/webhooks.module";
 import { AuthModule } from "../auth/auth.module";
 import { CashWindowPort } from "./ports/cash-window.port";
 import { CashWindowNoneAdapter } from "./adapters/cash-window.none";
+import { KdsBus } from "./kds.bus";
 
 @Module({
   imports: [AuthModule, WebhooksModule],
@@ -13,9 +14,9 @@ import { CashWindowNoneAdapter } from "./adapters/cash-window.none";
   providers: [
     PrismaService,
     KdsService,
-    // KdsGateway,
+    KdsBus, // 👈 provê o bus de SSE
     { provide: CashWindowPort, useClass: CashWindowNoneAdapter },
   ],
-  exports: [KdsService],
+  exports: [KdsService, KdsBus], // 👈 exporta o bus para outros módulos (OrdersService)
 })
 export class KdsModule {}

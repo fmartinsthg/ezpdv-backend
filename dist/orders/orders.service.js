@@ -16,12 +16,15 @@ const client_1 = require("@prisma/client");
 const prisma_service_1 = require("../prisma/prisma.service");
 const jwt_1 = require("@nestjs/jwt");
 const webhooks_service_1 = require("../webhooks/webhooks.service");
+const kds_bus_1 = require("../kds/kds.bus"); // 👈 SSE bus
 const MAX_RETRIES = 3;
 let OrdersService = OrdersService_1 = class OrdersService {
-    constructor(prisma, jwtService, webhooks) {
+    constructor(prisma, jwtService, webhooks, bus // 👈 injeta o bus
+    ) {
         this.prisma = prisma;
         this.jwtService = jwtService;
         this.webhooks = webhooks;
+        this.bus = bus;
         this.logger = new common_1.Logger(OrdersService_1.name);
     }
     /* -------------------------- If-Match helpers -------------------------- */
@@ -447,7 +450,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
             status: client_1.OrderItemStatus.STAGED,
             ...(dto.itemIds?.length ? { id: { in: dto.itemIds } } : {}),
         };
-        // Itens STAGED a disparar
+        // Itens STAGED a disparar (já traz a prepStation do produto)
         const staged = await this.prisma.orderItem.findMany({
             where: whereItems,
             include: { product: { select: { prepStation: true } } },
@@ -462,16 +465,6 @@ let OrdersService = OrdersService_1 = class OrdersService {
         })), this.prisma);
         await this.checkAndDebitInventorySerializable(tenantId, orderId, required);
         const now = new Date();
-        // Mapa de estação por produto
-        const prodIds = Array.from(new Set(staged.map((s) => s.productId)));
-        const prodStations = await this.prisma.product.findMany({
-            where: { tenantId, id: { in: prodIds } },
-            select: { id: true, prepStation: true },
-        });
-        const stationByProduct = new Map(prodStations.map((p) => [
-            p.id,
-            p.prepStation ?? null,
-        ]));
         await this.prisma.$transaction(async (tx) => {
             await Promise.all(staged.map((s) => tx.orderItem.update({
                 where: { id: s.id },
@@ -506,6 +499,17 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 data: { assignedToUserId: user.userId, version: { increment: 1 } },
             });
         });
+        // SSE (fora da transação): emite item.fired por item
+        for (const s of staged) {
+            this.bus.publish({
+                type: "item.fired",
+                tenantId,
+                orderId,
+                itemId: s.id,
+                station: (s.product?.prepStation ?? client_1.PrepStation.KITCHEN),
+                at: now.toISOString(),
+            });
+        }
         // Webhook (não crítico)
         try {
             await this.webhooks.queueEvent(tenantId, "order.items_fired", {
@@ -654,12 +658,14 @@ let OrdersService = OrdersService_1 = class OrdersService {
             throw new common_1.BadRequestException("Há itens STAGED. Remova-os ou faça FIRE antes de fechar.");
         }
         const now = new Date();
+        let affected = 0; // 👈 quantos FIRED serão fechados (para SSE)
         const result = await this.prisma.$transaction(async (tx) => {
             // Captura IDs dos itens FIRED antes de fechar (para auditoria)
             const firedItems = await tx.orderItem.findMany({
                 where: { tenantId, orderId, status: client_1.OrderItemStatus.FIRED },
                 select: { id: true },
             });
+            affected = firedItems.length;
             // Fecha itens
             await tx.orderItem.updateMany({
                 where: { tenantId, orderId, status: client_1.OrderItemStatus.FIRED },
@@ -700,6 +706,16 @@ let OrdersService = OrdersService_1 = class OrdersService {
             });
             return updatedOrder;
         });
+        // SSE: notifica bump equivalente no fechamento da comanda
+        if (affected > 0) {
+            this.bus.publish({
+                type: "ticket.bumped",
+                tenantId,
+                orderId,
+                affected,
+                at: now.toISOString(),
+            });
+        }
         // webhook (não crítico)
         try {
             await this.webhooks.queueEvent(tenantId, "order.closed", {
@@ -720,5 +736,7 @@ exports.OrdersService = OrdersService = OrdersService_1 = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,
         jwt_1.JwtService,
-        webhooks_service_1.WebhooksService])
+        webhooks_service_1.WebhooksService,
+        kds_bus_1.KdsBus // 👈 injeta o bus
+    ])
 ], OrdersService);

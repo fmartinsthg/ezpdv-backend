@@ -25,6 +25,7 @@ import { CloseOrderDto } from "./dto/close-order.dto";
 import { AuthUser } from "../auth/jwt.strategy";
 import { JwtService } from "@nestjs/jwt";
 import { WebhooksService } from "../webhooks/webhooks.service";
+import { KdsBus } from "../kds/kds.bus"; // 👈 SSE bus
 
 const MAX_RETRIES = 3;
 type DbLike = Prisma.TransactionClient | PrismaClient;
@@ -36,7 +37,8 @@ export class OrdersService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
-    private readonly webhooks: WebhooksService
+    private readonly webhooks: WebhooksService,
+    private readonly bus: KdsBus // 👈 injeta o bus
   ) {}
 
   /* -------------------------- If-Match helpers -------------------------- */
@@ -571,7 +573,7 @@ export class OrdersService {
       ...(dto.itemIds?.length ? { id: { in: dto.itemIds } } : {}),
     };
 
-    // Itens STAGED a disparar
+    // Itens STAGED a disparar (já traz a prepStation do produto)
     const staged = await this.prisma.orderItem.findMany({
       where: whereItems,
       include: { product: { select: { prepStation: true } } },
@@ -592,19 +594,6 @@ export class OrdersService {
     await this.checkAndDebitInventorySerializable(tenantId, orderId, required);
 
     const now = new Date();
-
-    // Mapa de estação por produto
-    const prodIds = Array.from(new Set(staged.map((s) => s.productId)));
-    const prodStations = await this.prisma.product.findMany({
-      where: { tenantId, id: { in: prodIds } },
-      select: { id: true, prepStation: true },
-    });
-    const stationByProduct = new Map<string, PrepStation | null>(
-      prodStations.map((p) => [
-        p.id,
-        (p.prepStation as PrepStation | null) ?? null,
-      ])
-    );
 
     await this.prisma.$transaction(async (tx) => {
       await Promise.all(
@@ -647,6 +636,18 @@ export class OrdersService {
         data: { assignedToUserId: user.userId, version: { increment: 1 } },
       });
     });
+
+    // SSE (fora da transação): emite item.fired por item
+    for (const s of staged) {
+      this.bus.publish({
+        type: "item.fired",
+        tenantId,
+        orderId,
+        itemId: s.id,
+        station: (s.product?.prepStation ?? PrepStation.KITCHEN) as PrepStation,
+        at: now.toISOString(),
+      });
+    }
 
     // Webhook (não crítico)
     try {
@@ -861,6 +862,7 @@ export class OrdersService {
     }
 
     const now = new Date();
+    let affected = 0; // 👈 quantos FIRED serão fechados (para SSE)
 
     const result = await this.prisma.$transaction(async (tx) => {
       // Captura IDs dos itens FIRED antes de fechar (para auditoria)
@@ -868,6 +870,7 @@ export class OrdersService {
         where: { tenantId, orderId, status: OrderItemStatus.FIRED },
         select: { id: true },
       });
+      affected = firedItems.length;
 
       // Fecha itens
       await tx.orderItem.updateMany({
@@ -914,6 +917,17 @@ export class OrdersService {
 
       return updatedOrder;
     });
+
+    // SSE: notifica bump equivalente no fechamento da comanda
+    if (affected > 0) {
+      this.bus.publish({
+        type: "ticket.bumped",
+        tenantId,
+        orderId,
+        affected,
+        at: now.toISOString(),
+      });
+    }
 
     // webhook (não crítico)
     try {

@@ -15,6 +15,7 @@ const webhooks_module_1 = require("../webhooks/webhooks.module");
 const auth_module_1 = require("../auth/auth.module");
 const cash_window_port_1 = require("./ports/cash-window.port");
 const cash_window_none_1 = require("./adapters/cash-window.none");
+const kds_bus_1 = require("./kds.bus");
 let KdsModule = class KdsModule {
 };
 exports.KdsModule = KdsModule;
@@ -25,9 +26,9 @@ exports.KdsModule = KdsModule = __decorate([
         providers: [
             prisma_service_1.PrismaService,
             kds_service_1.KdsService,
-            // KdsGateway,
+            kds_bus_1.KdsBus, // 👈 provê o bus de SSE
             { provide: cash_window_port_1.CashWindowPort, useClass: cash_window_none_1.CashWindowNoneAdapter },
         ],
-        exports: [kds_service_1.KdsService],
+        exports: [kds_service_1.KdsService, kds_bus_1.KdsBus], // 👈 exporta o bus para outros módulos (OrdersService)
     })
 ], KdsModule);
