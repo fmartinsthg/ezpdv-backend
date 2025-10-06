@@ -336,8 +336,9 @@ model IdempotencyKey {
   updatedAt          DateTime          @updatedAt
   expiresAt          DateTime // TTL = now + 48h
 
-  @@unique([tenantId, scope, key])
-  @@index([tenantId, scope, key])
+  @@unique([tenantId, scope, key], name: "tenantId_scope_key")
+  @@index([tenantId, scope])
+  @@index([expiresAt])
 }
 
 /**

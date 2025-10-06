@@ -2,9 +2,10 @@ import {
   ExecutionContext,
   SetMetadata,
   createParamDecorator,
-} from '@nestjs/common';
+} from "@nestjs/common";
 
-export const IDEMPOTENCY_SCOPE_META = 'IDEMPOTENCY_SCOPE_META' as const;
+export const IDEMPOTENCY_SCOPE_META = "IDEMPOTENCY_SCOPE_META" as const;
+export const IDEMPOTENCY_FORBIDDEN = '__IDEMPOTENCY_FORBIDDEN__' as const;
 
 /**
  * Marca o handler com o(s) escopo(s) aceito(s) para idempotência.
@@ -14,7 +15,7 @@ export const IDEMPOTENCY_SCOPE_META = 'IDEMPOTENCY_SCOPE_META' as const;
 export const Idempotent = (scopes: string | string[]) =>
   SetMetadata(
     IDEMPOTENCY_SCOPE_META,
-    Array.isArray(scopes) ? scopes : [scopes],
+    Array.isArray(scopes) ? scopes : [scopes]
   );
 
 /** Contexto de idempotência injetado pelo Interceptor no req */
@@ -40,5 +41,5 @@ export const IdempotencyCtx = createParamDecorator(
   (_data: unknown, ctx: ExecutionContext): IdempotencyContext | undefined => {
     const req = ctx.switchToHttp().getRequest();
     return req?.idempotency as IdempotencyContext | undefined;
-  },
+  }
 );

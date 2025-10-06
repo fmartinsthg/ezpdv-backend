@@ -34,6 +34,7 @@ export class IdempotencyService {
     "orders:close": "orders:close",
     "orders:create": "orders:create",
     // Payments
+    "orders:payments:capture": "payments:capture",
     "payments:capture": "payments:capture",
     "payments:refund": "payments:refund",
     "payments:cancel": "payments:cancel",

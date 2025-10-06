@@ -26,8 +26,8 @@ import { CancelPaymentDto } from "./dto/cancel-payment.dto";
 import { QueryPaymentsDto } from "./dto/query-payments.dto";
 
 import { JwtAuthGuard } from "../auth/jwt.guard";
-import { RolesGuard } from "../auth/roles.guard";
-import { Roles } from "../auth/roles.decorator";
+import { RolesGuard } from "../common/guards/roles.guard";
+import { Roles } from "../common/decorators/roles.decorator";
 
 import { CurrentUser } from "../auth/current-user.decorator";
 import { AuthUser } from "../auth/jwt.strategy";
@@ -35,9 +35,12 @@ import { TenantId } from "../common/tenant/tenant.decorator";
 import { TenantContextGuard } from "../common/tenant/tenant-context.guard";
 
 import { PaymentsApprovalGuard } from "./payments.approval.guard";
-import { Idempotent } from "../common/idempotency/idempotency.decorator";
+import {
+  Idempotent,
+  IDEMPOTENCY_FORBIDDEN,
+} from "../common/idempotency/idempotency.decorator";
 
-@ApiTags("Payments")
+@ApiTags("payments")
 @ApiBearerAuth()
 @Controller()
 @UseGuards(JwtAuthGuard, TenantContextGuard, RolesGuard)
@@ -90,6 +93,7 @@ export class PaymentsController {
 
   @Get("tenants/:tenantId/orders/:orderId/payments")
   @Roles("SUPERADMIN", "ADMIN", "MODERATOR", "USER")
+  @Idempotent(IDEMPOTENCY_FORBIDDEN)
   @ApiOperation({ summary: "Lista pagamentos de uma ordem" })
   async listByOrder(
     @TenantId() tenantId: string,
@@ -100,6 +104,7 @@ export class PaymentsController {
 
   @Get("tenants/:tenantId/payments")
   @Roles("SUPERADMIN", "ADMIN", "MODERATOR")
+  @Idempotent(IDEMPOTENCY_FORBIDDEN)
   @ApiOperation({ summary: "Lista pagamentos do tenant (filtros + paginação)" })
   async listByTenant(
     @TenantId() tenantId: string,

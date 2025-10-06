@@ -1,8 +1,9 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.IdempotencyCtx = exports.Idempotent = exports.IDEMPOTENCY_SCOPE_META = void 0;
+exports.IdempotencyCtx = exports.Idempotent = exports.IDEMPOTENCY_FORBIDDEN = exports.IDEMPOTENCY_SCOPE_META = void 0;
 const common_1 = require("@nestjs/common");
-exports.IDEMPOTENCY_SCOPE_META = 'IDEMPOTENCY_SCOPE_META';
+exports.IDEMPOTENCY_SCOPE_META = "IDEMPOTENCY_SCOPE_META";
+exports.IDEMPOTENCY_FORBIDDEN = '__IDEMPOTENCY_FORBIDDEN__';
 /**
  * Marca o handler com o(s) escopo(s) aceito(s) para idempotência.
  * Aceita string única ou array de strings. O Interceptor fará a

@@ -11,11 +11,11 @@
     "skipLibCheck": true,
     "resolveJsonModule": true,
     "outDir": "./dist",
-    "baseUrl": "./src", // ✅ já estava certo
+    "baseUrl": "./src",
     "paths": {
-      "*": ["*"] // ✅ ajuda a resolver erros de path relativos
-    }
+      "*": ["*"]
+    },
   },
-  "include": ["src/**/*"], // ✅ ESSENCIAL: garante que todos os arquivos em src serão compilados
+  "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]
 }

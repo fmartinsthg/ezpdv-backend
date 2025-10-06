@@ -21,8 +21,8 @@ const refund_payment_dto_1 = require("./dto/refund-payment.dto");
 const cancel_payment_dto_1 = require("./dto/cancel-payment.dto");
 const query_payments_dto_1 = require("./dto/query-payments.dto");
 const jwt_guard_1 = require("../auth/jwt.guard");
-const roles_guard_1 = require("../auth/roles.guard");
-const roles_decorator_1 = require("../auth/roles.decorator");
+const roles_guard_1 = require("../common/guards/roles.guard");
+const roles_decorator_1 = require("../common/decorators/roles.decorator");
 const current_user_decorator_1 = require("../auth/current-user.decorator");
 const tenant_decorator_1 = require("../common/tenant/tenant.decorator");
 const tenant_context_guard_1 = require("../common/tenant/tenant-context.guard");
@@ -105,6 +105,7 @@ __decorate([
 __decorate([
     (0, common_1.Get)("tenants/:tenantId/orders/:orderId/payments"),
     (0, roles_decorator_1.Roles)("SUPERADMIN", "ADMIN", "MODERATOR", "USER"),
+    (0, idempotency_decorator_1.Idempotent)(idempotency_decorator_1.IDEMPOTENCY_FORBIDDEN),
     (0, swagger_1.ApiOperation)({ summary: "Lista pagamentos de uma ordem" }),
     __param(0, (0, tenant_decorator_1.TenantId)()),
     __param(1, (0, common_1.Param)("orderId", new common_1.ParseUUIDPipe())),
@@ -115,6 +116,7 @@ __decorate([
 __decorate([
     (0, common_1.Get)("tenants/:tenantId/payments"),
     (0, roles_decorator_1.Roles)("SUPERADMIN", "ADMIN", "MODERATOR"),
+    (0, idempotency_decorator_1.Idempotent)(idempotency_decorator_1.IDEMPOTENCY_FORBIDDEN),
     (0, swagger_1.ApiOperation)({ summary: "Lista pagamentos do tenant (filtros + paginação)" }),
     __param(0, (0, tenant_decorator_1.TenantId)()),
     __param(1, (0, common_1.Query)()),
@@ -177,7 +179,7 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], PaymentsController.prototype, "cancel", null);
 exports.PaymentsController = PaymentsController = __decorate([
-    (0, swagger_1.ApiTags)("Payments"),
+    (0, swagger_1.ApiTags)("payments"),
     (0, swagger_1.ApiBearerAuth)(),
     (0, common_1.Controller)(),
     (0, common_1.UseGuards)(jwt_guard_1.JwtAuthGuard, tenant_context_guard_1.TenantContextGuard, roles_guard_1.RolesGuard),

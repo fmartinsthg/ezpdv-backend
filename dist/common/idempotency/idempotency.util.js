@@ -1,38 +1,25 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.canonicalJsonStringify = canonicalJsonStringify;
 exports.sha256Hex = sha256Hex;
 exports.isUuidV4 = isUuidV4;
-const crypto_1 = require("crypto");
-/** Ordena chaves recursivamente e serializa de forma determinística */
-function canonicalJsonStringify(value) {
-    return JSON.stringify(sortValue(value));
+// src/common/idempotency/idempotency.util.ts
+const node_crypto_1 = __importDefault(require("node:crypto"));
+function canonicalJsonStringify(obj) {
+    // ordena chaves para hashing determinístico
+    const sort = (o) => Array.isArray(o)
+        ? o.map(sort)
+        : o && typeof o === 'object'
+            ? Object.keys(o).sort().reduce((acc, k) => (acc[k] = sort(o[k]), acc), {})
+            : o;
+    return JSON.stringify(sort(obj ?? {}));
 }
-function sortValue(value) {
-    if (Array.isArray(value)) {
-        return value.map(sortValue);
-    }
-    if (value && typeof value === 'object') {
-        const keys = Object.keys(value).sort();
-        const obj = {};
-        for (const k of keys) {
-            const v = value[k];
-            // Remover nulls redundantes (opcional: ajuste conforme semântica)
-            if (v === undefined)
-                continue;
-            obj[k] = sortValue(v);
-        }
-        return obj;
-    }
-    // Para números, apenas deixe como estão (se quiser, converta para string decimal)
-    return value;
+function sha256Hex(s) {
+    return node_crypto_1.default.createHash('sha256').update(s, 'utf8').digest('hex');
 }
-function sha256Hex(input) {
-    return (0, crypto_1.createHash)('sha256').update(input, 'utf8').digest('hex');
-}
-function isUuidV4(str) {
-    if (!str)
-        return false;
-    // UUID v4 (simplificada)
-    return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(str);
+function isUuidV4(v) {
+    return typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(v);
 }

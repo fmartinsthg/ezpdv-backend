@@ -10,6 +10,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IdempotencyInterceptor = void 0;
+// src/common/idempotency/idempotency.interceptor.ts
 const common_1 = require("@nestjs/common");
 const core_1 = require("@nestjs/core");
 const rxjs_1 = require("rxjs");
@@ -24,24 +25,34 @@ let IdempotencyInterceptor = class IdempotencyInterceptor {
         this.service = service;
     }
     intercept(context, next) {
-        const meta = this.reflector.get(idempotency_decorator_1.IDEMPOTENCY_SCOPE_META, context.getHandler()) || null;
+        const raw = this.reflector.get(idempotency_decorator_1.IDEMPOTENCY_SCOPE_META, context.getHandler());
         // Handler não idempotente → segue normal
-        if (!meta)
+        if (!raw)
             return next.handle();
-        const allowed = Array.isArray(meta) ? meta : [meta];
+        const allowed = Array.isArray(raw) ? raw : [raw];
+        // Política FORBIDDEN: recusa qualquer header idempotente nesta rota
+        const isForbidden = allowed.length === 1 && allowed[0] === idempotency_decorator_1.IDEMPOTENCY_FORBIDDEN;
         const http = context.switchToHttp();
         const req = http.getRequest();
         const res = http.getResponse();
+        if (isForbidden) {
+            const hasIdemHeaders = !!req.headers[idempotency_constants_1.IDEMPOTENCY_HEADERS.KEY] ||
+                !!req.headers[idempotency_constants_1.IDEMPOTENCY_HEADERS.SCOPE];
+            if (hasIdemHeaders) {
+                throw new common_1.BadRequestException("Escopo de idempotência não permitido para este endpoint.");
+            }
+            return next.handle();
+        }
         const tenantId = req.tenantId;
-        const scopeHeader = String(req.headers[idempotency_constants_1.IDEMPOTENCY_HEADERS.SCOPE] || '');
-        const keyHeader = String(req.headers[idempotency_constants_1.IDEMPOTENCY_HEADERS.KEY] || '');
+        const scopeHeader = String(req.headers[idempotency_constants_1.IDEMPOTENCY_HEADERS.SCOPE] || "");
+        const keyHeader = String(req.headers[idempotency_constants_1.IDEMPOTENCY_HEADERS.KEY] || "");
         if (!tenantId) {
-            throw new common_1.BadRequestException('tenantId ausente no contexto.');
+            throw new common_1.BadRequestException("tenantId ausente no contexto.");
         }
         // Valida cabeçalhos + sinônimos; checa presença de key
         this.service.validateHeadersOrThrow(allowed, scopeHeader, keyHeader);
         if (!(0, idempotency_util_1.isUuidV4)(keyHeader)) {
-            throw new common_1.BadRequestException('Idempotency-Key deve ser UUID v4.');
+            throw new common_1.BadRequestException("Idempotency-Key deve ser UUID v4.");
         }
         // Hash determinístico do BODY
         const bodyString = (0, idempotency_util_1.canonicalJsonStringify)(req.body ?? {});
@@ -52,38 +63,46 @@ let IdempotencyInterceptor = class IdempotencyInterceptor {
             (async () => {
                 try {
                     const begin = await this.service.beginOrReplay(tenantId, effectiveScope, keyHeader, requestHash);
-                    // Sempre ecoar os headers idempotentes
-                    res.setHeader('Idempotency-Key', keyHeader);
-                    res.setHeader('Idempotency-Scope', scopeHeader);
-                    if (begin.action === 'REPLAY') {
-                        res.setHeader(idempotency_constants_1.IDEMPOTENCY_HEADERS.REPLAYED, 'true');
+                    // Sempre ecoar os headers idempotentes para facilitar debug
+                    res.setHeader("Idempotency-Key", keyHeader);
+                    res.setHeader("Idempotency-Scope", scopeHeader);
+                    if (begin.action === "REPLAY") {
+                        res.setHeader(idempotency_constants_1.IDEMPOTENCY_HEADERS.REPLAYED, "true");
                         res.status(begin.responseCode || common_1.HttpStatus.OK);
                         subscriber.next(begin.responseBody ?? {});
                         subscriber.complete();
                         return;
                     }
-                    if (begin.action === 'IN_PROGRESS') {
-                        res.setHeader('Retry-After', String(idempotency_constants_1.IDEMPOTENCY_DEFAULTS.RETRY_AFTER_SECONDS));
-                        res.status(common_1.HttpStatus.TOO_MANY_REQUESTS);
-                        subscriber.error(new Error('IDEMPOTENCY_IN_PROGRESS'));
-                        return;
+                    if (begin.action === "IN_PROGRESS") {
+                        // Concorrência com a mesma key → 429 + Retry-After
+                        res.setHeader("Retry-After", String(idempotency_constants_1.IDEMPOTENCY_DEFAULTS.RETRY_AFTER_SECONDS));
+                        throw new common_1.HttpException("IDEMPOTENCY_IN_PROGRESS", common_1.HttpStatus.TOO_MANY_REQUESTS);
                     }
-                    // PROCEED → segue para o handler
-                    res.setHeader(idempotency_constants_1.IDEMPOTENCY_HEADERS.REPLAYED, 'false');
+                    // PROCEED → injeta contexto para @IdempotencyCtx()
+                    req.idempotency = {
+                        key: keyHeader,
+                        scope: effectiveScope,
+                        requestHash,
+                        recordId: begin.recordId,
+                    };
+                    res.setHeader(idempotency_constants_1.IDEMPOTENCY_HEADERS.REPLAYED, "false");
                     next
                         .handle()
                         .pipe((0, operators_1.tap)(async (data) => {
-                        // Persistir snapshot (32 KB) e hints de recurso (orderId etc.)
+                        // Persistir snapshot e hints de recurso (orderId etc.)
                         const resource = this.extractResource(effectiveScope, data);
                         await this.service.succeed(begin.recordId, res.statusCode || common_1.HttpStatus.OK, data, resource);
                     }), (0, operators_1.catchError)((err) => {
-                        const code = (err?.response && (err.response.code || err.response?.message)) ||
-                            err?.message ||
-                            'UNEXPECTED_ERROR';
-                        const msg = (err?.response && (err.response.message || err.response)) ||
-                            err?.message;
+                        const code = (err?.status ??
+                            err?.response?.status ??
+                            err?.code ??
+                            "UNEXPECTED_ERROR") + "";
+                        const msg = (err?.message ??
+                            err?.response?.message ??
+                            (typeof err?.response === "string" ? err.response : "")) +
+                            "";
                         this.service
-                            .fail(begin.recordId, String(code).slice(0, 60), String(msg || '').slice(0, 500))
+                            .fail(begin.recordId, code.slice(0, 60), msg.slice(0, 500))
                             .catch(() => { });
                         throw err;
                     }))
@@ -100,11 +119,19 @@ let IdempotencyInterceptor = class IdempotencyInterceptor {
         });
     }
     extractResource(scope, body) {
-        if (scope.startsWith('orders:') && body && typeof body === 'object') {
-            const id = body.id ?? body.orderId ?? (Array.isArray(body.items) ? body.id : undefined);
-            if (typeof id === 'string') {
-                return { resourceType: 'order', resourceId: id };
-            }
+        if (!body || typeof body !== "object")
+            return {};
+        // orders:* → prioriza id ou orderId
+        if (scope.startsWith("orders:")) {
+            const id = body.id ?? body.orderId;
+            if (typeof id === "string")
+                return { resourceType: "order", resourceId: id };
+        }
+        // payments:* → vincula ao orderId
+        if (scope.startsWith("payments:")) {
+            const oid = body.orderId ?? body.order?.id ?? body?.summary?.orderId;
+            if (typeof oid === "string")
+                return { resourceType: "order", resourceId: oid };
         }
         return {};
     }
