@@ -34,6 +34,9 @@ import { PlatformModule } from "./platform/platform.module";
 import { KdsModule } from "./kds/kds.module";
 import { WebhooksModule } from "./webhooks/webhooks.module";
 
+// ⬇️ NOVO: módulo de Caixa
+import { CashModule } from "./cash/cash.module";
+
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
@@ -49,6 +52,9 @@ import { WebhooksModule } from "./webhooks/webhooks.module";
     PlatformModule,
     WebhooksModule,
     KdsModule,
+
+    // ⬇️ adiciona o módulo de Caixa
+    CashModule,
   ],
   controllers: [AppController],
   providers: [
@@ -68,9 +74,7 @@ export class AppModule implements NestModule {
     consumer.apply(HttpTenantMiddleware).forRoutes(
       { path: "categories", method: RequestMethod.ALL },
       { path: "products", method: RequestMethod.ALL }
-      // se houver outros endpoints top-level que exigem X-Tenant-Id, adicione aqui:
-      // { path: 'inventory', method: RequestMethod.ALL },
-      // { path: 'recipes', method: RequestMethod.ALL },
+      // adicione outros endpoints top-level se necessário
     );
 
     // ❌ Removemos o `.forRoutes('*')` global para não atingir /auth/login

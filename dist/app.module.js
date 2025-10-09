@@ -29,13 +29,13 @@ const payment_intents_module_1 = require("./payment-intents/payment-intents.modu
 const platform_module_1 = require("./platform/platform.module");
 const kds_module_1 = require("./kds/kds.module");
 const webhooks_module_1 = require("./webhooks/webhooks.module");
+// ⬇️ NOVO: módulo de Caixa
+const cash_module_1 = require("./cash/cash.module");
 let AppModule = class AppModule {
     configure(consumer) {
         // ✅ Escopa o middleware APENAS onde o header é necessário
         consumer.apply(http_tenant_middleware_1.HttpTenantMiddleware).forRoutes({ path: "categories", method: common_1.RequestMethod.ALL }, { path: "products", method: common_1.RequestMethod.ALL }
-        // se houver outros endpoints top-level que exigem X-Tenant-Id, adicione aqui:
-        // { path: 'inventory', method: RequestMethod.ALL },
-        // { path: 'recipes', method: RequestMethod.ALL },
+        // adicione outros endpoints top-level se necessário
         );
         // ❌ Removemos o `.forRoutes('*')` global para não atingir /auth/login
     }
@@ -57,6 +57,8 @@ exports.AppModule = AppModule = __decorate([
             platform_module_1.PlatformModule,
             webhooks_module_1.WebhooksModule,
             kds_module_1.KdsModule,
+            // ⬇️ adiciona o módulo de Caixa
+            cash_module_1.CashModule,
         ],
         controllers: [app_controller_1.AppController],
         providers: [

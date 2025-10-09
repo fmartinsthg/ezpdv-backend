@@ -18,11 +18,16 @@ const client_1 = require("@prisma/client");
 const prisma_service_1 = require("../prisma/prisma.service");
 const payment_gateway_interface_1 = require("./gateway/payment-gateway.interface");
 const webhooks_service_1 = require("../webhooks/webhooks.service");
+// 🔽 NOVO: integração com o módulo de Caixa
+const cash_service_1 = require("../cash/cash.service");
 let PaymentsService = class PaymentsService {
-    constructor(prisma, gateway, webhooks) {
+    constructor(prisma, gateway, webhooks, 
+    // 🔽 injeta CashService para associação automática de pagamentos à sessão OPEN
+    cash) {
         this.prisma = prisma;
         this.gateway = gateway;
         this.webhooks = webhooks;
+        this.cash = cash;
     }
     /** Quantiza valor monetário para 2 casas decimais (consistência). */
     q2(v) {
@@ -68,8 +73,13 @@ let PaymentsService = class PaymentsService {
     /**
      * Captura pagamentos APENAS para ordens CLOSED (consistente com o fluxo KDS -> close -> payments).
      * Gera eventos OrderEvent adequados e webhooks correspondentes.
+     *
+     * 🔁 Integração Caixa:
+     * - `stationId` é opcional; se informado, tentamos vincular o pagamento à CashSession OPEN dessa estação.
+     *   (No controller, leia de `req.headers['x-station-id']` e passe aqui.)
      */
-    async capture(tenantId, dto, currentUserId) {
+    async capture(tenantId, dto, currentUserId, stationId // 🔽 NOVO
+    ) {
         const orderId = dto.orderId;
         const amount = this.q2(dto.amount);
         if (amount.lte(0))
@@ -244,6 +254,16 @@ let PaymentsService = class PaymentsService {
                 settledNow,
             };
         }, { timeout: 20000 });
+        // 🔁 Associação automática com a sessão de caixa OPEN da estação (fora da tx)
+        // Se `stationId` não vier, apenas ignoramos silenciosamente (não é erro).
+        try {
+            if (stationId) {
+                await this.cash.tryAttachPaymentToOpenSession(tenantId, result.payment.id, stationId);
+            }
+        }
+        catch {
+            /* noop: não quebra o fluxo de captura */
+        }
         // Webhooks fora da transação
         try {
             await this.webhooks.queueEvent(tenantId, "payment.captured", {
@@ -467,5 +487,6 @@ exports.PaymentsService = PaymentsService;
 exports.PaymentsService = PaymentsService = __decorate([
     (0, common_1.Injectable)(),
     __param(1, (0, common_1.Inject)(payment_gateway_interface_1.PAYMENT_GATEWAY)),
-    __metadata("design:paramtypes", [prisma_service_1.PrismaService, Object, webhooks_service_1.WebhooksService])
+    __metadata("design:paramtypes", [prisma_service_1.PrismaService, Object, webhooks_service_1.WebhooksService,
+        cash_service_1.CashService])
 ], PaymentsService);

@@ -12,8 +12,16 @@ import { IdempotencyModule } from "../common/idempotency/idempotency.module";
 import { WebhooksModule } from "../webhooks/webhooks.module";
 import { AuthModule } from "../auth/auth.module";
 
+// ⬇️ NOVO: necessário para injetar CashService no PaymentsService
+import { CashModule } from "../cash/cash.module";
+
 @Module({
-  imports: [AuthModule, WebhooksModule, IdempotencyModule],
+  imports: [
+    AuthModule,
+    WebhooksModule,
+    IdempotencyModule,
+    CashModule, // ⬅️ traz CashService (exportado pelo CashModule)
+  ],
   controllers: [PaymentsController],
   providers: [
     PrismaService,
@@ -22,7 +30,7 @@ import { AuthModule } from "../auth/auth.module";
     PaymentsApprovalGuard,
     {
       provide: PAYMENT_GATEWAY,
-      useClass: NullGateway,
+      useClass: NullGateway, // mantenha sua implementação atual
     },
   ],
   exports: [PaymentsService],

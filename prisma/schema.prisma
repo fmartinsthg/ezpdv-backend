@@ -166,6 +166,11 @@ model Tenant {
   webhookEndpoints  WebhookEndpoint[] @relation("TenantWebhookEndpoint")
   webhookEvents     WebhookEvent[]    @relation("TenantWebhookEvent")
   webhookDeliveries WebhookDelivery[]
+
+  // ------------------------- Caixa (Cash Management) -------------------------
+  cashSessions  CashSession[]
+  cashMovements CashMovement[]
+  cashCounts    CashCount[]
 }
 
 model User {
@@ -449,6 +454,10 @@ model Payment {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
+  // ------------------------- Caixa: vínculo opcional a um turno (CashSession) -------------------------
+  sessionId String?
+  session   CashSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
+
   // Relações
   order     Order  @relation(fields: [orderId], references: [id])
   tenant    Tenant @relation(fields: [tenantId], references: [id])
@@ -458,8 +467,7 @@ model Payment {
   intent PaymentIntent? @relation(fields: [paymentIntentId], references: [id])
 
   // Tentativas (ex.: autorizações, callbacks do PSP)
-  attempts PaymentAttempt[] @relation("Payment_Attempts")
-
+  attempts     PaymentAttempt[]   @relation("Payment_Attempts")
   transactions PaymentTransaction[]
 
   // De-dupe robusto por evento do PSP
@@ -468,6 +476,7 @@ model Payment {
   // Índices
   @@index([tenantId, orderId, createdAt])
   @@index([tenantId, status])
+  @@index([tenantId, sessionId]) // <— para consultas por sessão de caixa
 }
 
 model PaymentIntent {
@@ -513,7 +522,7 @@ model PaymentAttempt {
 }
 
 model WebhookEndpoint {
-id        String   @id @default(uuid())
+  id        String   @id @default(uuid())
   tenantId  String
   url       String
   secret    String
@@ -706,4 +715,88 @@ model OrderItemEvent {
   user      User      @relation(fields: [userId], references: [id])
 
   @@index([tenantId, orderItemId, createdAt])
+}
+
+/**
+ * ------------------------- Caixa (Cash Management) -------------------------
+ */
+
+enum CashSessionStatus {
+  OPEN
+  CLOSED
+}
+
+enum CashMovementType {
+  SUPRIMENTO
+  SANGRIA
+}
+
+enum CashCountKind {
+  PARTIAL
+  FINAL
+}
+
+model CashSession {
+  id             String            @id @default(uuid())
+  tenantId       String
+  stationId      String
+  openedByUserId String
+  openedAt       DateTime          @default(now())
+  closedAt       DateTime?
+  status         CashSessionStatus @default(OPEN)
+
+  // JSONs de agregados/sumários (mantidos como stringified decimals no service)
+  openingFloat   Json              // { "CASH": "150.00" }
+  totalsByMethod Json              @default("{}") // { "CASH": "...", "CARD": "...", "PIX": "..." }
+  paymentsCount  Json              @default("{}") // { "CASH": n, "CARD": n, "PIX": n, "total": n }
+
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  tenant    Tenant       @relation(fields: [tenantId], references: [id])
+  movements CashMovement[]
+  counts    CashCount[]
+  payments  Payment[]    // back-relation de Payment.sessionId
+
+  @@index([tenantId, stationId, status])
+  @@index([tenantId, openedAt])
+
+  // IMPORTANTE: "1 sessão OPEN por (tenantId, stationId)" será garantido com
+  // um UNIQUE INDEX PARCIAL criado via SQL bruto na migração:
+  //   CREATE UNIQUE INDEX IF NOT EXISTS "ux_cashsession_open_per_station_tenant"
+  //   ON "CashSession" ("tenantId","stationId") WHERE status = 'OPEN';
+}
+
+model CashMovement {
+  id              String           @id @default(uuid())
+  tenantId        String
+  sessionId       String
+  type            CashMovementType
+  method          PaymentMethod    // Negócio restringe a CASH (validado na aplicação)
+  amount          Decimal          @db.Decimal(10, 2)
+  reason          String?
+  createdByUserId String
+  createdAt       DateTime         @default(now())
+
+  tenant  Tenant      @relation(fields: [tenantId], references: [id])
+  session CashSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, sessionId, createdAt])
+}
+
+model CashCount {
+  id              String        @id @default(uuid())
+  tenantId        String
+  sessionId       String
+  kind            CashCountKind
+  denominations   Json          // {"0.05":10, "2":12, "50":3}
+  total           Decimal       @db.Decimal(10, 2)
+  countedByUserId String
+  createdAt       DateTime      @default(now())
+
+  tenant  Tenant      @relation(fields: [tenantId], references: [id])
+  session CashSession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, sessionId, createdAt])
 }

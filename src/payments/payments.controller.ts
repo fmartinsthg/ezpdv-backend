@@ -52,7 +52,8 @@ export class PaymentsController {
   @HttpCode(201)
   @Idempotent("payments:capture")
   @ApiOperation({
-    summary: "Captura de pagamento para uma ordem CLOSED (split-friendly)",
+    summary:
+      "Captura de pagamento para uma ordem CLOSED (split-friendly) + associação opcional ao Caixa via X-Station-Id",
   })
   @ApiHeader({
     name: "Idempotency-Key",
@@ -63,6 +64,13 @@ export class PaymentsController {
     name: "Idempotency-Scope",
     required: true,
     description: "Valor fixo: payments:capture",
+  })
+  @ApiHeader({
+    name: "X-Station-Id",
+    required: false,
+    description:
+      "Identificador da estação (ex.: bar-01). Se enviado, tentará vincular o pagamento à CashSession OPEN dessa estação.",
+    example: "bar-01",
   })
   @ApiParam({
     name: "tenantId",
@@ -78,7 +86,8 @@ export class PaymentsController {
     @TenantId() tenantId: string,
     @Param("orderId", new ParseUUIDPipe()) orderId: string,
     @Body() dto: CreatePaymentDto,
-    @CurrentUser() user: AuthUser
+    @CurrentUser() user: AuthUser,
+    @Req() req: any // ⬅ necessário para ler o header X-Station-Id
   ) {
     const actorId =
       (user as any)?.userId ?? (user as any)?.id ?? (user as any)?.sub;
@@ -88,7 +97,11 @@ export class PaymentsController {
       );
     }
     dto.orderId = orderId;
-    return this.payments.capture(tenantId, dto, actorId);
+
+    // ⬇︎ leitura do X-Station-Id e repasse para o service
+    const stationId = req.headers["x-station-id"] as string | undefined;
+
+    return this.payments.capture(tenantId, dto, actorId, stationId);
   }
 
   @Get("tenants/:tenantId/orders/:orderId/payments")

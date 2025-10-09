@@ -23,12 +23,17 @@ import { RefundPaymentDto } from "./dto/refund-payment.dto";
 import { CancelPaymentDto } from "./dto/cancel-payment.dto";
 import { WebhooksService } from "../webhooks/webhooks.service";
 
+// 🔽 NOVO: integração com o módulo de Caixa
+import { CashService } from "../cash/cash.service";
+
 @Injectable()
 export class PaymentsService {
   constructor(
     private readonly prisma: PrismaService,
     @Inject(PAYMENT_GATEWAY) private readonly gateway: PaymentGateway,
-    private readonly webhooks: WebhooksService
+    private readonly webhooks: WebhooksService,
+    // 🔽 injeta CashService para associação automática de pagamentos à sessão OPEN
+    private readonly cash: CashService
   ) {}
 
   /** Quantiza valor monetário para 2 casas decimais (consistência). */
@@ -92,11 +97,16 @@ export class PaymentsService {
   /**
    * Captura pagamentos APENAS para ordens CLOSED (consistente com o fluxo KDS -> close -> payments).
    * Gera eventos OrderEvent adequados e webhooks correspondentes.
+   *
+   * 🔁 Integração Caixa:
+   * - `stationId` é opcional; se informado, tentamos vincular o pagamento à CashSession OPEN dessa estação.
+   *   (No controller, leia de `req.headers['x-station-id']` e passe aqui.)
    */
   async capture(
     tenantId: string,
     dto: CreatePaymentDto,
-    currentUserId: string
+    currentUserId: string,
+    stationId?: string // 🔽 NOVO
   ) {
     const orderId = dto.orderId;
     const amount = this.q2(dto.amount);
@@ -288,6 +298,20 @@ export class PaymentsService {
       },
       { timeout: 20000 }
     );
+
+    // 🔁 Associação automática com a sessão de caixa OPEN da estação (fora da tx)
+    // Se `stationId` não vier, apenas ignoramos silenciosamente (não é erro).
+    try {
+      if (stationId) {
+        await this.cash.tryAttachPaymentToOpenSession(
+          tenantId,
+          result.payment.id,
+          stationId
+        );
+      }
+    } catch {
+      /* noop: não quebra o fluxo de captura */
+    }
 
     // Webhooks fora da transação
     try {

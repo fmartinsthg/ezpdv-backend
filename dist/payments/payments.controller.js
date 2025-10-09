@@ -32,13 +32,16 @@ let PaymentsController = class PaymentsController {
     constructor(payments) {
         this.payments = payments;
     }
-    async createAndCapture(tenantId, orderId, dto, user) {
+    async createAndCapture(tenantId, orderId, dto, user, req // ⬅ necessário para ler o header X-Station-Id
+    ) {
         const actorId = user?.userId ?? user?.id ?? user?.sub;
         if (!actorId) {
             throw new common_1.BadRequestException("Invalid authenticated user (missing id/sub).");
         }
         dto.orderId = orderId;
-        return this.payments.capture(tenantId, dto, actorId);
+        // ⬇︎ leitura do X-Station-Id e repasse para o service
+        const stationId = req.headers["x-station-id"];
+        return this.payments.capture(tenantId, dto, actorId, stationId);
     }
     async listByOrder(tenantId, orderId) {
         return this.payments.listByOrder(tenantId, orderId);
@@ -72,7 +75,7 @@ __decorate([
     (0, common_1.HttpCode)(201),
     (0, idempotency_decorator_1.Idempotent)("payments:capture"),
     (0, swagger_1.ApiOperation)({
-        summary: "Captura de pagamento para uma ordem CLOSED (split-friendly)",
+        summary: "Captura de pagamento para uma ordem CLOSED (split-friendly) + associação opcional ao Caixa via X-Station-Id",
     }),
     (0, swagger_1.ApiHeader)({
         name: "Idempotency-Key",
@@ -83,6 +86,12 @@ __decorate([
         name: "Idempotency-Scope",
         required: true,
         description: "Valor fixo: payments:capture",
+    }),
+    (0, swagger_1.ApiHeader)({
+        name: "X-Station-Id",
+        required: false,
+        description: "Identificador da estação (ex.: bar-01). Se enviado, tentará vincular o pagamento à CashSession OPEN dessa estação.",
+        example: "bar-01",
     }),
     (0, swagger_1.ApiParam)({
         name: "tenantId",
@@ -98,8 +107,9 @@ __decorate([
     __param(1, (0, common_1.Param)("orderId", new common_1.ParseUUIDPipe())),
     __param(2, (0, common_1.Body)()),
     __param(3, (0, current_user_decorator_1.CurrentUser)()),
+    __param(4, (0, common_1.Req)()),
     __metadata("design:type", Function),
-    __metadata("design:paramtypes", [String, String, create_payment_dto_1.CreatePaymentDto, Object]),
+    __metadata("design:paramtypes", [String, String, create_payment_dto_1.CreatePaymentDto, Object, Object]),
     __metadata("design:returntype", Promise)
 ], PaymentsController.prototype, "createAndCapture", null);
 __decorate([
