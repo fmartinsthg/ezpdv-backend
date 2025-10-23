@@ -2,7 +2,7 @@ import { Module } from "@nestjs/common";
 import { PaymentsController } from "./payments.controller";
 import { PaymentsService } from "./payments.service";
 import { PrismaService } from "../prisma/prisma.service";
-import { JwtService } from "@nestjs/jwt";
+// ❌ REMOVIDO: import { JwtService } from "@nestjs/jwt";
 import { PaymentsApprovalGuard } from "./payments.approval.guard";
 
 import { NullGateway } from "./gateway/null.gateway";
@@ -12,25 +12,24 @@ import { IdempotencyModule } from "../common/idempotency/idempotency.module";
 import { WebhooksModule } from "../webhooks/webhooks.module";
 import { AuthModule } from "../auth/auth.module";
 
-// ⬇️ NOVO: necessário para injetar CashService no PaymentsService
+// necessário para injetar CashService no PaymentsService
 import { CashModule } from "../cash/cash.module";
 
 @Module({
   imports: [
-    AuthModule,
+    AuthModule, // -> JwtService e guards vêm daqui
     WebhooksModule,
     IdempotencyModule,
-    CashModule, // ⬅️ traz CashService (exportado pelo CashModule)
+    CashModule, // -> expõe CashService
   ],
   controllers: [PaymentsController],
   providers: [
     PrismaService,
     PaymentsService,
-    JwtService,
     PaymentsApprovalGuard,
     {
       provide: PAYMENT_GATEWAY,
-      useClass: NullGateway, // mantenha sua implementação atual
+      useClass: NullGateway,
     },
   ],
   exports: [PaymentsService],

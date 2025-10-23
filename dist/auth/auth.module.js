@@ -15,18 +15,19 @@ const auth_service_1 = require("./auth.service");
 const jwt_strategy_1 = require("./jwt.strategy");
 const auth_controller_1 = require("./auth.controller");
 const users_module_1 = require("../users/users.module");
+// ✅ Importe e exporte os guards aqui para ficarem disponíveis aos módulos que importarem o AuthModule
+const jwt_guard_1 = require("./jwt.guard");
+const roles_guard_1 = require("../common/guards/roles.guard");
+const tenant_context_guard_1 = require("../common/tenant/tenant-context.guard");
 let AuthModule = class AuthModule {
 };
 exports.AuthModule = AuthModule;
 exports.AuthModule = AuthModule = __decorate([
     (0, common_1.Module)({
         imports: [
-            // Config global já está no AppModule, mas deixamos explícito aqui
             config_1.ConfigModule,
             users_module_1.UsersModule,
-            // Passport com estratégia padrão jwt
             passport_1.PassportModule.register({ defaultStrategy: "jwt" }),
-            // JwtModule assíncrono para pegar secret das envs
             jwt_1.JwtModule.registerAsync({
                 imports: [config_1.ConfigModule],
                 inject: [config_1.ConfigService],
@@ -39,8 +40,22 @@ exports.AuthModule = AuthModule = __decorate([
             }),
         ],
         controllers: [auth_controller_1.AuthController],
-        providers: [auth_service_1.AuthService, jwt_strategy_1.JwtStrategy],
-        // ⬇️ Exporte JwtModule e PassportModule para os APP_GUARDs enxergarem JwtService
-        exports: [auth_service_1.AuthService, jwt_1.JwtModule, passport_1.PassportModule],
+        providers: [
+            auth_service_1.AuthService,
+            jwt_strategy_1.JwtStrategy,
+            // ✅ disponibiliza os guards como providers
+            jwt_guard_1.JwtAuthGuard,
+            roles_guard_1.RolesGuard,
+            tenant_context_guard_1.TenantContextGuard,
+        ],
+        // ✅ exporta tudo que os outros módulos precisam
+        exports: [
+            auth_service_1.AuthService,
+            jwt_1.JwtModule, // -> entrega JwtService
+            passport_1.PassportModule,
+            jwt_guard_1.JwtAuthGuard,
+            roles_guard_1.RolesGuard,
+            tenant_context_guard_1.TenantContextGuard,
+        ],
     })
 ], AuthModule);

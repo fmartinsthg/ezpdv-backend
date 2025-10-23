@@ -8,16 +8,16 @@ import { JwtStrategy } from "./jwt.strategy";
 import { AuthController } from "./auth.controller";
 import { UsersModule } from "../users/users.module";
 
+// ✅ Importe e exporte os guards aqui para ficarem disponíveis aos módulos que importarem o AuthModule
+import { JwtAuthGuard } from "./jwt.guard";
+import { RolesGuard } from "../common/guards/roles.guard";
+import { TenantContextGuard } from "../common/tenant/tenant-context.guard";
+
 @Module({
   imports: [
-    // Config global já está no AppModule, mas deixamos explícito aqui
     ConfigModule,
     UsersModule,
-
-    // Passport com estratégia padrão jwt
     PassportModule.register({ defaultStrategy: "jwt" }),
-
-    // JwtModule assíncrono para pegar secret das envs
     JwtModule.registerAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -31,8 +31,22 @@ import { UsersModule } from "../users/users.module";
     }),
   ],
   controllers: [AuthController],
-  providers: [AuthService, JwtStrategy],
-  // ⬇️ Exporte JwtModule e PassportModule para os APP_GUARDs enxergarem JwtService
-  exports: [AuthService, JwtModule, PassportModule],
+  providers: [
+    AuthService,
+    JwtStrategy,
+    // ✅ disponibiliza os guards como providers
+    JwtAuthGuard,
+    RolesGuard,
+    TenantContextGuard,
+  ],
+  // ✅ exporta tudo que os outros módulos precisam
+  exports: [
+    AuthService,
+    JwtModule, // -> entrega JwtService
+    PassportModule,
+    JwtAuthGuard,
+    RolesGuard,
+    TenantContextGuard,
+  ],
 })
 export class AuthModule {}

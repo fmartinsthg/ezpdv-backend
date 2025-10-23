@@ -11,15 +11,21 @@ const common_1 = require("@nestjs/common");
 const cash_controller_1 = require("./cash.controller");
 const cash_service_1 = require("./cash.service");
 const prisma_service_1 = require("../prisma/prisma.service");
-// IMPORTANTE: ajuste o import conforme sua infra de webhooks:
-const webhooks_service_1 = require("../webhooks/webhooks.service"); // BullMQ/Redis já existente
+// ✅ Em vez de injetar WebhooksService direto, importe o módulo dele
+const webhooks_module_1 = require("../webhooks/webhooks.module");
+// ✅ Importa AuthModule para disponibilizar JwtService e Guards no contexto do CashModule
+const auth_module_1 = require("../auth/auth.module");
 let CashModule = class CashModule {
 };
 exports.CashModule = CashModule;
 exports.CashModule = CashModule = __decorate([
     (0, common_1.Module)({
+        imports: [
+            auth_module_1.AuthModule, // -> entrega JwtService e Guards
+            webhooks_module_1.WebhooksModule, // -> entrega WebhooksService (se o CashService/Controller precisar)
+        ],
         controllers: [cash_controller_1.CashController],
-        providers: [cash_service_1.CashService, prisma_service_1.PrismaService, webhooks_service_1.WebhooksService],
+        providers: [cash_service_1.CashService, prisma_service_1.PrismaService],
         exports: [cash_service_1.CashService],
     })
 ], CashModule);

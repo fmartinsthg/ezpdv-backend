@@ -74,18 +74,22 @@ export async function until<T>(
   }
 }
 
+// ---------------- Catalog (top-level + X-Tenant-Id) ------------------------
+
 export async function createCategory() {
   const body = {
     name: `E2E Cat ${Date.now()}`,
     description: "Categoria para E2E pagamentos",
   };
 
-  const res = await api
-    .post("/categories")
-    .set(authH)
-    .set("X-Tenant-Id", tenantId)
-    .set("Accept", "application/json")
-    .send(body);
+  const res = await withNetRetry(() =>
+    api
+      .post("/categories")
+      .set(authH)
+      .set("X-Tenant-Id", tenantId)
+      .set("Accept", "application/json")
+      .send(body)
+  );
 
   if (![200, 201].includes(res.status)) {
     console.error(
@@ -117,12 +121,14 @@ export async function createProduct(
     prepStation: station,
   };
 
-  const res = await api
-    .post("/products")
-    .set(authH)
-    .set("X-Tenant-Id", tenantId)
-    .set("Accept", "application/json")
-    .send(body);
+  const res = await withNetRetry(() =>
+    api
+      .post("/products")
+      .set(authH)
+      .set("X-Tenant-Id", tenantId)
+      .set("Accept", "application/json")
+      .send(body)
+  );
 
   if (![200, 201].includes(res.status)) {
     console.error(
@@ -136,16 +142,20 @@ export async function createProduct(
   return String(res.body.id);
 }
 
+// ---------------- Orders (tenant path) -------------------------------------
+
 export async function createOrder(productId: string, qty = 2) {
-  const res = await api
-    .post(`/tenants/${tenantId}/orders`)
-    .set(authH)
-    .set(idem("orders:create"))
-    .set("Accept", "application/json")
-    .send({
-      tabNumber: `E2E-PAY-${Date.now()}`,
-      items: [{ productId, quantity: qty }],
-    });
+  const res = await withNetRetry(() =>
+    api
+      .post(`/tenants/${tenantId}/orders`)
+      .set(authH)
+      .set(idem("orders:create"))
+      .set("Accept", "application/json")
+      .send({
+        tabNumber: `E2E-PAY-${Date.now()}`,
+        items: [{ productId, quantity: qty }],
+      })
+  );
 
   if (res.status !== 201) {
     console.error("Falha POST /orders:", res.status, res.body);
@@ -156,10 +166,12 @@ export async function createOrder(productId: string, qty = 2) {
   const version = String(res.body?.version ?? "");
   if (!id) throw new Error("Order sem id");
 
-  const get = await api
-    .get(`/tenants/${tenantId}/orders/${id}`)
-    .set(authH)
-    .set("Accept", "application/json");
+  const get = await withNetRetry(() =>
+    api
+      .get(`/tenants/${tenantId}/orders/${id}`)
+      .set(authH)
+      .set("Accept", "application/json")
+  );
   if (get.status !== 200)
     throw new Error(`GET order falhou: HTTP ${get.status}`);
 
@@ -168,12 +180,14 @@ export async function createOrder(productId: string, qty = 2) {
 }
 
 export async function fireOrder(orderId: string) {
-  const res = await api
-    .post(`/tenants/${tenantId}/orders/${orderId}/fire`)
-    .set(authH)
-    .set(idem("orders:fire"))
-    .set("Accept", "application/json")
-    .send({});
+  const res = await withNetRetry(() =>
+    api
+      .post(`/tenants/${tenantId}/orders/${orderId}/fire`)
+      .set(authH)
+      .set(idem("orders:fire"))
+      .set("Accept", "application/json")
+      .send({})
+  );
   if (![200, 201].includes(res.status)) {
     console.error("Falha POST /orders/:id/fire:", res.status, res.body);
     throw new Error(`Fire falhou: HTTP ${res.status}`);
@@ -181,18 +195,22 @@ export async function fireOrder(orderId: string) {
 }
 
 export async function listKdsFired(station = defaultStation) {
-  return api
-    .get(`/tenants/${tenantId}/kds/items`)
-    .query({ station, status: "FIRED", page: 1, pageSize: 50 })
-    .set(authH)
-    .set("Accept", "application/json");
+  return withNetRetry(() =>
+    api
+      .get(`/tenants/${tenantId}/kds/items`)
+      .query({ station, status: "FIRED", page: 1, pageSize: 50 })
+      .set(authH)
+      .set("Accept", "application/json")
+  );
 }
 
 export async function getOrder(orderId: string) {
-  const res = await api
-    .get(`/tenants/${tenantId}/orders/${orderId}`)
-    .set(authH)
-    .set("Accept", "application/json");
+  const res = await withNetRetry(() =>
+    api
+      .get(`/tenants/${tenantId}/orders/${orderId}`)
+      .set(authH)
+      .set("Accept", "application/json")
+  );
   if (res.status !== 200) {
     console.error("Falha GET /orders/:id:", res.status, res.body);
     throw new Error(`GET order falhou: HTTP ${res.status}`);
@@ -236,11 +254,18 @@ export async function closeOrder(orderId: string, version?: string | number) {
   return { version: res.body?.version };
 }
 
-// pagamento com fallback **controlado** e key nova ao alternar escopo
+// ---------------- Payments (com station opcional) --------------------------
+
+/**
+ * Captura pagamento em CASH por padrão.
+ * Assinatura preservada: (orderId, amount, idemKey?) e
+ * foi adicionado o 4º parâmetro opcional stationId para enviar X-Station-Id.
+ */
 export async function capturePayment(
   orderId: string,
   amount: string,
-  idemKey?: string
+  idemKey?: string,
+  stationId?: string
 ) {
   type Policy = "auto" | "required" | "forbidden";
   const policy = (
@@ -267,10 +292,14 @@ export async function capturePayment(
       .send({ orderId, method: "CASH", amount, provider: "NULL" });
 
     if (withScope) req = req.set("Idempotency-Scope", PAYMENT_SCOPE);
+    if (stationId) req = req.set("X-Station-Id", stationId);
 
     if (DEBUG)
       console.log(
-        `→ PAY (scope=${withScope ? "ON" : "OFF"}, key=${key.slice(0, 8)})`
+        `→ PAY (scope=${withScope ? "ON" : "OFF"}, key=${key.slice(
+          0,
+          8
+        )}, station=${stationId ?? "-"})`
       );
 
     const res = await withNetRetry(() => req);
@@ -290,7 +319,7 @@ export async function capturePayment(
   const key1 = idemKey ?? randomUUID();
   let res = await tryOnce(firstWithScope, key1);
 
-  // Se não for 400 ou se a política for fixa (required/forbidden), encerramos aqui
+  // Se não for 400 ou se a política for fixa (required/forbidden), encerra
   if (res.status !== 400 || policy !== "auto") {
     if (![200, 201].includes(res.status)) {
       console.error("Falha POST /payments:", res.status, res.body);
@@ -313,22 +342,16 @@ export async function capturePayment(
 
   if (saysForbidden && firstWithScope) {
     if (DEBUG)
-      console.log(
-        "↻ PAY fallback: removendo scope (policy detectada: FORBIDDEN)"
-      );
+      console.log("↻ PAY fallback: removendo scope (FORBIDDEN detectado)");
     nextWithScope = false;
     doFallback = true;
   } else if (saysRequired && !firstWithScope) {
-    if (DEBUG)
-      console.log(
-        "↻ PAY fallback: adicionando scope (policy detectada: REQUIRED)"
-      );
+    if (DEBUG) console.log("↻ PAY fallback: adicionando scope (REQUIRED)");
     nextWithScope = true;
     doFallback = true;
   }
 
   if (!doFallback) {
-    // 400 por outro motivo → não ficar em loop
     console.error(
       "Falha POST /payments (sem fallback aplicável):",
       res.status,
@@ -345,4 +368,154 @@ export async function capturePayment(
     console.error("Falha POST /payments (fallback):", res.status, res.body);
     throw new Error(`Pagamento falhou: HTTP ${res.status}`);
   }
+}
+
+// ---------------- Cash (novo) ----------------------------------------------
+
+/** Localiza uma sessão OPEN para a estação (via listagem). */
+export async function findOpenCashSessionId(
+  stationId: string
+): Promise<string | null> {
+  const res = await withNetRetry(() =>
+    api
+      .get(`/tenants/${tenantId}/cash/sessions`)
+      .query({ status: "OPEN", stationId, page: 1, pageSize: 1 })
+      .set(authH)
+      .set("Accept", "application/json")
+  );
+  if (res.status !== 200) return null;
+  const id = res.body?.items?.[0]?.id;
+  return id ? String(id) : null;
+}
+
+/**
+ * Abre sessão se não existir; se já existir (409), reaproveita a OPEN.
+ * Mantém o nome exportado openCashSession para não quebrar quem usa.
+ */
+export async function openCashSession(stationId: string) {
+  const res = await withNetRetry(() =>
+    api
+      .post(`/tenants/${tenantId}/cash/sessions/open`)
+      .set(authH)
+      .set(idem("cash:open"))
+      .set("Accept", "application/json")
+      .send({
+        stationId,
+        openingFloat: { CASH: "150.00" },
+        notes: "e2e open",
+      })
+  );
+
+  if ([200, 201].includes(res.status)) {
+    const id = String(res.body?.id ?? "");
+    if (!id) throw new Error("Open cash retornou sem id");
+    return id;
+  }
+
+  // 409 = já existe OPEN → localizar e retornar
+  if (res.status === 409) {
+    const openId = await findOpenCashSessionId(stationId);
+    if (!openId)
+      throw new Error(
+        "Já existe sessão OPEN, mas não consegui localizar o id (listagem vazia)"
+      );
+    return openId;
+  }
+
+  console.error(
+    "Falha POST /cash/sessions/open:",
+    res.status,
+    JSON.stringify(res.body, null, 2)
+  );
+  throw new Error(`Open cash falhou: HTTP ${res.status}`);
+}
+
+export async function createCashMovement(
+  sessionId: string,
+  type: "SUPRIMENTO" | "SANGRIA",
+  amount: string,
+  reason?: string
+) {
+  const res = await withNetRetry(() =>
+    api
+      .post(`/tenants/${tenantId}/cash/sessions/${sessionId}/movements`)
+      .set(authH)
+      .set(idem("cash:movement"))
+      .set("Accept", "application/json")
+      .send({ type, method: "CASH", amount, reason })
+  );
+
+  if (![200, 201].includes(res.status)) {
+    console.error("Falha POST cash movement:", res.status, res.body);
+    throw new Error(`Movement falhou: HTTP ${res.status}`);
+  }
+}
+
+export async function createCashCount(
+  sessionId: string,
+  kind: "PARTIAL" | "FINAL",
+  total: string,
+  denominations: Record<string, number> = {}
+) {
+  const res = await withNetRetry(() =>
+    api
+      .post(`/tenants/${tenantId}/cash/sessions/${sessionId}/counts`)
+      .set(authH)
+      .set(idem("cash:count"))
+      .set("Accept", "application/json")
+      .send({ kind, total, denominations })
+  );
+
+  if (![200, 201].includes(res.status)) {
+    console.error("Falha POST cash count:", res.status, res.body);
+    throw new Error(`Count falhou: HTTP ${res.status}`);
+  }
+}
+
+export async function getCashSessionDetail(sessionId: string) {
+  const res = await withNetRetry(() =>
+    api
+      .get(`/tenants/${tenantId}/cash/sessions/${sessionId}`)
+      .set(authH)
+      .set("Accept", "application/json")
+  );
+
+  if (res.status !== 200) {
+    console.error("Falha GET cash session:", res.status, res.body);
+    throw new Error(`GET cash session falhou: HTTP ${res.status}`);
+  }
+  return res.body;
+}
+
+export async function closeCashSession(sessionId: string) {
+  const res = await withNetRetry(() =>
+    api
+      .post(`/tenants/${tenantId}/cash/sessions/${sessionId}/close`)
+      .set(authH)
+      .set(idem("cash:close"))
+      .set("Accept", "application/json")
+      .send({ note: "e2e close" })
+  );
+
+  if (![200, 201].includes(res.status)) {
+    console.error("Falha POST cash close:", res.status, res.body);
+    throw new Error(`Close cash falhou: HTTP ${res.status}`);
+  }
+  return res.body; // summary
+}
+
+export async function getDailyReport(dateISO: string /* yyyy-MM-dd */) {
+  const res = await withNetRetry(() =>
+    api
+      .get(`/tenants/${tenantId}/cash/reports/daily`)
+      .query({ date: dateISO })
+      .set(authH)
+      .set("Accept", "application/json")
+  );
+
+  if (res.status !== 200) {
+    console.error("Falha GET cash daily report:", res.status, res.body);
+    throw new Error(`Daily report falhou: HTTP ${res.status}`);
+  }
+  return res.body; // { CASH?: "..." , ... }
 }

@@ -7,63 +7,94 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const node_test_1 = require("node:test");
 const expect_1 = __importDefault(require("expect"));
 const helpers_1 = require("./helpers");
-(0, node_test_1.test)("KDS + Pagamentos (fluxo completo: close → pay → settled → some do KDS)", async (t) => {
-    console.log("[payments-v4] baseUrl/tenant loaded OK");
+function todayUtcYYYYMMDD() {
+    const d = new Date();
+    const y = d.getUTCFullYear();
+    const m = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(d.getUTCDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+}
+(0, node_test_1.test)("KDS + Payments + Cash (close → pay CASH w/ station → settled → KDS some + cash summary)", async (t) => {
+    console.log("[payments+cash] baseUrl/tenant OK");
     let categoryId = "";
     let productId = "";
     let orderId = "";
     let orderVersion = "";
     let orderTotal = "0.00";
-    await t.test("cria categoria (top-level, X-Tenant-Id)", async () => {
+    let cashSessionId = "";
+    // garante sessão OPEN (se já existir, reusa)
+    await t.test("abre sessão de caixa (station)", async () => {
+        cashSessionId = await (0, helpers_1.openCashSession)(helpers_1.defaultStation);
+        (0, expect_1.default)(!!cashSessionId).toBe(true);
+    });
+    await t.test("cria categoria", async () => {
         categoryId = await (0, helpers_1.createCategory)();
-        console.log("✓ categoria criada", categoryId);
         (0, expect_1.default)(Boolean(categoryId)).toBe(true);
     });
-    await t.test("cria produto (top-level, X-Tenant-Id) com prepStation e stock", async () => {
+    await t.test("cria produto com prepStation", async () => {
         productId = await (0, helpers_1.createProduct)(categoryId, helpers_1.defaultStation);
-        console.log("✓ produto criado", productId);
         (0, expect_1.default)(Boolean(productId)).toBe(true);
     });
-    await t.test("cria comanda com 2 itens (idempotência)", async () => {
+    await t.test("cria comanda com 2 itens", async () => {
         const o = await (0, helpers_1.createOrder)(productId, 2);
         orderId = o.id;
-        orderVersion = o.version; // pode ficar desatualizada depois do FIRE
+        orderVersion = o.version; // pode ficar obsoleta após FIRE
         orderTotal = o.total;
-        console.log("✓ comanda criada", { orderId, orderTotal });
         (0, expect_1.default)(orderId).toBeTruthy();
         (0, expect_1.default)(orderTotal).toMatch(/^\d+\.\d{2,}$/);
     });
-    await t.test("FIRE itens (idempotência) e garante FIRED no KDS", async () => {
+    await t.test("FIRE itens e KDS exibe ticket", async () => {
         await (0, helpers_1.fireOrder)(orderId);
         const kds = await (0, helpers_1.until)(() => (0, helpers_1.listKdsFired)(helpers_1.defaultStation), (r) => r.status === 200 &&
             Array.isArray(r.body?.items) &&
             r.body.items.some((it) => it.orderId === orderId));
         (0, expect_1.default)(kds.status).toBe(200);
-        const firedFromOrder = (kds.body?.items || []).filter((it) => it.orderId === orderId);
-        (0, expect_1.default)(firedFromOrder.length > 0).toBe(true);
-        console.log("✓ FIRE refletido no KDS");
     });
-    await t.test("fecha pedido (orders:close) → some do KDS; depois captura pagamento (valor total)", async () => {
-        console.log(">>> iniciando CLOSE (If-Match) + PAY + settled + verificação no KDS");
-        // 1) CLOSE (helpers tratam 412 e timeouts)
+    await t.test("CLOSE → captura pagamento CASH (com X-Station-Id) → SETTLED → some do KDS", async () => {
+        // 1) close
         await (0, helpers_1.closeOrder)(orderId, orderVersion);
-        console.log("✓ order CLOSED");
-        // 2) Confirma CLOSED (evita race)
+        // 2) garantia CLOSED
         await (0, helpers_1.until)(() => (0, helpers_1.getOrder)(orderId), (o) => o.status === "CLOSED" || o.isClosed === true, { timeoutMs: 4000, intervalMs: 150 });
-        // 3) Paga o total (helpers alternam escopo e aplicam timeout)
-        await (0, helpers_1.capturePayment)(orderId, orderTotal);
-        console.log("✓ payment CAPTURED");
-        // 4) Aguarda isSettled / SETTLED (se seu domínio sinaliza isso)
-        await (0, helpers_1.until)(() => (0, helpers_1.getOrder)(orderId), (o) => o.isSettled === true || o.status === "SETTLED", { timeoutMs: 5000, intervalMs: 150 });
-        console.log("✓ order SETTLED");
-        // 5) Garante que sumiu do KDS
+        // 3) paga total em CASH com X-Station-Id (integração Cash)
+        await (0, helpers_1.capturePayment)(orderId, orderTotal, undefined, helpers_1.defaultStation);
+        // 4) aguarda settled
+        await (0, helpers_1.until)(() => (0, helpers_1.getOrder)(orderId), (o) => o.isSettled === true || o.status === "SETTLED", { timeoutMs: 6000, intervalMs: 200 });
+        // 5) garante que sumiu do KDS
         const after = await (0, helpers_1.until)(() => (0, helpers_1.listKdsFired)(helpers_1.defaultStation), (r) => r.status === 200 &&
             Array.isArray(r.body?.items) &&
             !r.body.items.some((it) => it.orderId === orderId), { timeoutMs: 6000, intervalMs: 200 });
         (0, expect_1.default)(after.status).toBe(200);
         const stillThere = (after.body?.items || []).some((it) => it.orderId === orderId);
         (0, expect_1.default)(stillThere).toBe(false);
-        console.log("✓ KDS sem itens da comanda após pagamento/settled");
-        console.log(">>> CLOSE + PAY + settled + KDS OK");
+    });
+    await t.test("detalhe da sessão deve listar o payment", async () => {
+        const s = await (0, helpers_1.getCashSessionDetail)(cashSessionId);
+        (0, expect_1.default)(Array.isArray(s?.payments)).toBe(true);
+        (0, expect_1.default)((s?.payments || []).length >= 1).toBe(true);
+    });
+    await t.test("fecha sessão de caixa e confere summary", async () => {
+        const summary = await (0, helpers_1.closeCashSession)(cashSessionId);
+        (0, expect_1.default)(typeof summary?.cashExpected).toBe("string");
+        (0, expect_1.default)(summary?.payments?.count >= 1).toBe(true);
+        if (summary?.totalsByMethod?.CASH) {
+            (0, expect_1.default)(String(summary.totalsByMethod.CASH)).toMatch(/^\d+\.\d{2,}$/);
+        }
+    });
+    await t.test("daily report do dia deve refletir CASH", async () => {
+        const rep = await (0, helpers_1.getDailyReport)(todayUtcYYYYMMDD());
+        if (rep && rep.CASH) {
+            (0, expect_1.default)(String(rep.CASH)).toMatch(/^\d+\.\d{2,}$/);
+        }
+    });
+    // cleanup: se algo falhar antes do close explícito, tenta fechar aqui
+    t.after(async () => {
+        try {
+            if (cashSessionId) {
+                await (0, helpers_1.closeCashSession)(cashSessionId);
+            }
+        }
+        catch {
+            /* noop */
+        }
     });
 });

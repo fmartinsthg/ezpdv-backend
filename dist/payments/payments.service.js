@@ -18,12 +18,10 @@ const client_1 = require("@prisma/client");
 const prisma_service_1 = require("../prisma/prisma.service");
 const payment_gateway_interface_1 = require("./gateway/payment-gateway.interface");
 const webhooks_service_1 = require("../webhooks/webhooks.service");
-// 🔽 NOVO: integração com o módulo de Caixa
+// 🔽 Integração com o módulo de Caixa
 const cash_service_1 = require("../cash/cash.service");
 let PaymentsService = class PaymentsService {
-    constructor(prisma, gateway, webhooks, 
-    // 🔽 injeta CashService para associação automática de pagamentos à sessão OPEN
-    cash) {
+    constructor(prisma, gateway, webhooks, cash) {
         this.prisma = prisma;
         this.gateway = gateway;
         this.webhooks = webhooks;
@@ -33,16 +31,34 @@ let PaymentsService = class PaymentsService {
     q2(v) {
         return new client_1.Prisma.Decimal(v).toDecimalPlaces(2);
     }
+    /** Formata para string com 2 casas. */
+    fmt2(v) {
+        return this.q2(v).toFixed(2);
+    }
     /** Converte para centavos (minor units) para gateways. */
     toMinorUnits(amount) {
         const v = this.q2(amount);
         return Number(v.times(100).toFixed(0));
     }
+    /** Serializa datas para ISO e garante amount como string 2c. */
+    serializePayment(p) {
+        return {
+            ...p,
+            amount: p?.amount !== undefined ? this.fmt2(p.amount) : p?.amount,
+            createdAt: p?.createdAt && typeof p.createdAt.toISOString === "function"
+                ? p.createdAt.toISOString()
+                : p?.createdAt,
+            updatedAt: p?.updatedAt && typeof p.updatedAt.toISOString === "function"
+                ? p.updatedAt.toISOString()
+                : p?.updatedAt,
+        };
+    }
     async listByOrder(tenantId, orderId) {
-        return this.prisma.payment.findMany({
+        const items = await this.prisma.payment.findMany({
             where: { tenantId, orderId },
             orderBy: { createdAt: "asc" },
         });
+        return items.map((p) => this.serializePayment(p));
     }
     async listByTenant(tenantId, query) {
         const { method, status, dateFrom, dateTo, page = 1, pageSize = 20 } = query;
@@ -68,18 +84,18 @@ let PaymentsService = class PaymentsService {
             }),
             this.prisma.payment.count({ where }),
         ]);
-        return { items, total, page, pageSize };
+        return {
+            items: items.map((p) => this.serializePayment(p)),
+            total,
+            page,
+            pageSize,
+        };
     }
     /**
-     * Captura pagamentos APENAS para ordens CLOSED (consistente com o fluxo KDS -> close -> payments).
-     * Gera eventos OrderEvent adequados e webhooks correspondentes.
-     *
-     * 🔁 Integração Caixa:
-     * - `stationId` é opcional; se informado, tentamos vincular o pagamento à CashSession OPEN dessa estação.
-     *   (No controller, leia de `req.headers['x-station-id']` e passe aqui.)
+     * Captura pagamentos APENAS para ordens CLOSED.
+     * Integração com Caixa: se `stationId` vier, associamos o pagamento à sessão OPEN da estação.
      */
-    async capture(tenantId, dto, currentUserId, stationId // 🔽 NOVO
-    ) {
+    async capture(tenantId, dto, currentUserId, stationId) {
         const orderId = dto.orderId;
         const amount = this.q2(dto.amount);
         if (amount.lte(0))
@@ -89,11 +105,11 @@ let PaymentsService = class PaymentsService {
         const result = await this.prisma.$transaction(async (tx) => {
             // Lock da order (somente CLOSED aceita pagamento)
             const order = await tx.$queryRaw `
-            SELECT "id","status","total"
-            FROM "Order"
-            WHERE "id" = ${orderId} AND "tenantId" = ${tenantId}
-            FOR UPDATE
-          `.then((r) => r[0]);
+          SELECT "id","status","total"
+          FROM "Order"
+          WHERE "id" = ${orderId} AND "tenantId" = ${tenantId}
+          FOR UPDATE
+        `.then((r) => r[0]);
             if (!order)
                 throw new common_1.NotFoundException("Order not found for this tenant");
             if (order.status !== client_1.OrderStatus.CLOSED)
@@ -121,10 +137,10 @@ let PaymentsService = class PaymentsService {
                     message: "Captured sum would exceed order.total",
                     details: {
                         orderId: order.id,
-                        orderTotal: orderTotal.toString(),
-                        capturedSum: netCaptured.toString(),
-                        remainingDue: orderTotal.minus(netCaptured).toString(),
-                        requested: amount.toString(),
+                        orderTotal: this.fmt2(orderTotal),
+                        capturedSum: this.fmt2(netCaptured),
+                        remainingDue: this.fmt2(orderTotal.minus(netCaptured)),
+                        requested: this.fmt2(amount),
                     },
                 });
             }
@@ -138,7 +154,7 @@ let PaymentsService = class PaymentsService {
             });
             if (!gw.ok)
                 throw new common_1.ConflictException("Gateway capture failed");
-            // Tenta associar a um intent OPEN (se existir)
+            // Associa a intent OPEN (se existir)
             const openIntent = await tx.paymentIntent.findFirst({
                 where: { tenantId, orderId, status: client_1.PaymentIntentStatus.OPEN },
                 orderBy: { createdAt: "desc" },
@@ -161,7 +177,6 @@ let PaymentsService = class PaymentsService {
                 payment = await tx.payment.create({ data });
             }
             catch (e) {
-                // De-dupe: violação de unique (tenantId, provider, providerTxnId)
                 if (e?.code === "P2002" &&
                     (data.provider ?? dto.provider) &&
                     (data.providerTxnId ?? dto.providerTxnId)) {
@@ -233,12 +248,11 @@ let PaymentsService = class PaymentsService {
                         orderId,
                         userId: currentUserId,
                         eventType: "ORDER_SETTLED",
-                        reason: `captured=${newCaptured.toString()}`,
+                        reason: `captured=${this.fmt2(newCaptured)}`,
                     },
                 });
             }
             else {
-                // mantém isSettled como está (normalmente false); ainda assim incrementa versão
                 await tx.order.update({
                     where: { id: orderId },
                     data: { version: { increment: 1 } },
@@ -247,29 +261,28 @@ let PaymentsService = class PaymentsService {
             return {
                 payment,
                 summary: {
-                    orderTotal: orderTotal.toString(),
-                    capturedSum: newCaptured.toString(),
-                    remainingDue: orderTotal.minus(newCaptured).toString(),
+                    orderTotal: this.fmt2(orderTotal),
+                    capturedSum: this.fmt2(newCaptured),
+                    remainingDue: this.fmt2(orderTotal.minus(newCaptured)),
                 },
                 settledNow,
             };
         }, { timeout: 20000 });
-        // 🔁 Associação automática com a sessão de caixa OPEN da estação (fora da tx)
-        // Se `stationId` não vier, apenas ignoramos silenciosamente (não é erro).
+        // Associação automática com a sessão de caixa OPEN da estação (fora da tx)
         try {
             if (stationId) {
                 await this.cash.tryAttachPaymentToOpenSession(tenantId, result.payment.id, stationId);
             }
         }
         catch {
-            /* noop: não quebra o fluxo de captura */
+            /* noop */
         }
         // Webhooks fora da transação
         try {
             await this.webhooks.queueEvent(tenantId, "payment.captured", {
                 orderId: dto.orderId,
                 paymentId: result.payment.id,
-                amount: result.payment.amount,
+                amount: this.fmt2(result.payment.amount),
                 method: result.payment.method,
             }, { deliverNow: true });
             if (result.settledNow) {
@@ -277,9 +290,13 @@ let PaymentsService = class PaymentsService {
             }
         }
         catch {
-            /* noop: não quebra o fluxo */
+            /* noop */
         }
-        return { ...result.payment, summary: result.summary };
+        // 🔁 Normaliza retorno (amount 2c + datas ISO) + summary formatado
+        return {
+            ...this.serializePayment(result.payment),
+            summary: result.summary,
+        };
     }
     async refund(tenantId, paymentId, dto, approvalUserId) {
         const amount = this.q2(dto.amount);
@@ -330,7 +347,7 @@ let PaymentsService = class PaymentsService {
                     reason: dto.reason,
                 },
             });
-            // Pode mudar o status do próprio pagamento
+            // Atualiza status do próprio pagamento se zerar
             const newRemainingForThisPayment = remainingForThisPayment.minus(amount);
             if (newRemainingForThisPayment.lte(0)) {
                 await tx.payment.update({
@@ -345,7 +362,7 @@ let PaymentsService = class PaymentsService {
                     orderId: payment.orderId,
                     userId: approvalUserId,
                     eventType: "PAYMENT_REFUNDED",
-                    reason: dto.reason ?? `refund:${amount.toString()}`,
+                    reason: dto.reason ?? `refund:${this.fmt2(amount)}`,
                 },
             });
             // Recalcula posição financeira da ORDEM e ajusta flags
@@ -400,7 +417,7 @@ let PaymentsService = class PaymentsService {
                         orderId: payment.orderId,
                         userId: approvalUserId,
                         eventType: "ORDER_UNSETTLED",
-                        reason: `net=${netCapturedForOrder.toString()}`,
+                        reason: `net=${this.fmt2(netCapturedForOrder)}`,
                     },
                 });
             }
@@ -414,7 +431,7 @@ let PaymentsService = class PaymentsService {
             await this.webhooks.queueEvent(tenantId, "payment.refunded", {
                 paymentId,
                 orderId: res.orderId,
-                amount: res.amount,
+                amount: this.fmt2(res.amount),
             }, { deliverNow: true });
             if (res.unsettledNow) {
                 await this.webhooks.queueEvent(tenantId, "order.unsettled", { orderId: res.orderId }, { deliverNow: true });
@@ -423,7 +440,7 @@ let PaymentsService = class PaymentsService {
         catch {
             /* noop */
         }
-        return res.updated;
+        return this.serializePayment(res.updated);
     }
     async cancel(tenantId, paymentId, dto, approvalUserId) {
         if (!approvalUserId)
@@ -457,7 +474,6 @@ let PaymentsService = class PaymentsService {
                     reason: dto.reason ?? "cancel",
                 },
             });
-            // OrderEvent: cancelamento de pagamento
             await tx.orderEvent.create({
                 data: {
                     tenantId,
@@ -469,18 +485,13 @@ let PaymentsService = class PaymentsService {
             });
             return up;
         });
-        // Webhook fora da transação
         try {
-            await this.webhooks.queueEvent(tenantId, "payment.canceled", {
-                paymentId,
-                orderId: updated.orderId,
-            }, { deliverNow: true });
+            await this.webhooks.queueEvent(tenantId, "payment.canceled", { paymentId, orderId: updated.orderId }, { deliverNow: true });
         }
         catch {
             /* noop */
         }
-        // Observação: cancelamento de PENDING não altera somatórios capturados; não mexemos em isSettled/paidAt.
-        return updated;
+        return this.serializePayment(updated);
     }
 };
 exports.PaymentsService = PaymentsService;

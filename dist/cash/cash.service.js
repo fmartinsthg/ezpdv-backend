@@ -21,6 +21,10 @@ let CashService = class CashService {
     q2(v) {
         return new library_1.Decimal(v).toDecimalPlaces(2);
     }
+    // ✅ garante string SEMPRE com 2 casas
+    fmt2(v) {
+        return new library_1.Decimal(v).toDecimalPlaces(2).toFixed(2);
+    }
     // ---------- Queries ----------
     async listSessions(tenantId, q) {
         const { status, from, to, stationId, openedBy, page = 1, pageSize = 20, } = q;
@@ -208,7 +212,8 @@ let CashService = class CashService {
         };
         const suprimentos = await sumMov("SUPRIMENTO");
         const sangrias = await sumMov("SANGRIA");
-        const openingCash = new library_1.Decimal(session.openingFloat?.CASH ?? 0);
+        // ✅ use q2 para normalizar o troco inicial
+        const openingCash = this.q2(session.openingFloat?.CASH ?? 0);
         const cashCaptured = byMethod["CASH"] ?? this.q2(0);
         const cashExpected = openingCash
             .plus(suprimentos)
@@ -218,7 +223,7 @@ let CashService = class CashService {
             where: { tenantId, sessionId, kind: "FINAL" },
             orderBy: { createdAt: "desc" },
         });
-        const cashCountedFinal = finalCount ? finalCount.total : null;
+        const cashCountedFinal = finalCount ? this.q2(finalCount.total) : null;
         const cashDelta = cashCountedFinal
             ? cashCountedFinal.minus(cashExpected)
             : null;
@@ -228,29 +233,29 @@ let CashService = class CashService {
                 status: "CLOSED",
                 closedAt: new Date(),
                 notes: note ?? undefined,
-                totalsByMethod: Object.fromEntries(Object.entries(byMethod).map(([k, v]) => [k, v.toString()])),
+                // ✅ grava já formatado com 2 casas
+                totalsByMethod: Object.fromEntries(Object.entries(byMethod).map(([k, v]) => [k, this.fmt2(v)])),
                 paymentsCount,
             },
         });
         const summary = {
             totalsByMethod: updated.totalsByMethod,
-            cashExpected: cashExpected.toString(),
-            cashCountedFinal: cashCountedFinal ? cashCountedFinal.toString() : null,
-            cashDelta: cashDelta ? cashDelta.toString() : null,
+            cashExpected: this.fmt2(cashExpected),
+            cashCountedFinal: cashCountedFinal ? this.fmt2(cashCountedFinal) : null,
+            cashDelta: cashDelta ? this.fmt2(cashDelta) : null,
             movements: {
-                SUPRIMENTO: suprimentos.toString(),
-                SANGRIA: sangrias.toString(),
+                SUPRIMENTO: this.fmt2(suprimentos),
+                SANGRIA: this.fmt2(sangrias),
             },
             payments: {
                 count: payments.length,
-                byMethod: Object.fromEntries(Object.entries(byMethod).map(([k, v]) => [k, v.toString()])),
+                byMethod: Object.fromEntries(Object.entries(byMethod).map(([k, v]) => [k, this.fmt2(v)])),
             },
         };
         // this.webhooks?.emit('cash.closed', { tenantId, sessionId, summary });
         return summary;
     }
     async reopenSession(args) {
-        // Recupere roles do request/context conforme seu projeto (ex.: via RequestContext)
         const systemRole = global.requestContext?.systemRole ?? "NONE";
         const tenantRole = global.requestContext?.tenantRole ?? "USER";
         if (!(0, cash_permissions_1.canCloseOrReopen)(systemRole, tenantRole)) {
@@ -301,7 +306,8 @@ let CashService = class CashService {
                 }
             }
         }
-        return Object.fromEntries(Object.entries(sum).map(([k, v]) => [k, v.toString()]));
+        // ✅ retorna string com 2 casas
+        return Object.fromEntries(Object.entries(sum).map(([k, v]) => [k, this.fmt2(v)]));
     }
     async exportSessions(tenantId, q) {
         const { from, to, stationId } = q;
