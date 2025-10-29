@@ -754,6 +754,9 @@ model CashSession {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  // 🔽 NOVO: sentinela para unicidade de sessão OPEN por estação
+  openStationKey String? // = stationId quando OPEN; NULL quando CLOSED
+
   tenant    Tenant       @relation(fields: [tenantId], references: [id])
   movements CashMovement[]
   counts    CashCount[]
@@ -762,10 +765,8 @@ model CashSession {
   @@index([tenantId, stationId, status])
   @@index([tenantId, openedAt])
 
-  // IMPORTANTE: "1 sessão OPEN por (tenantId, stationId)" será garantido com
-  // um UNIQUE INDEX PARCIAL criado via SQL bruto na migração:
-  //   CREATE UNIQUE INDEX IF NOT EXISTS "ux_cashsession_open_per_station_tenant"
-  //   ON "CashSession" ("tenantId","stationId") WHERE status = 'OPEN';
+  // 🔒 Garante “1 OPEN por estação/tenant” sem índice parcial
+  @@unique([tenantId, openStationKey])
 }
 
 model CashMovement {

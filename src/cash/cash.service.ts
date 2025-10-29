@@ -7,6 +7,7 @@ import {
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { Decimal } from "@prisma/client/runtime/library";
+import { Prisma } from "@prisma/client"; // ⬅️ para mapear P2002 (unique)
 import { canCloseOrReopen } from "./policies/cash.permissions";
 
 type IdemMeta = { idemScope?: string; idemKey?: string };
@@ -22,6 +23,15 @@ export class CashService {
   // ✅ garante string SEMPRE com 2 casas
   private fmt2(v: string | number | Decimal) {
     return new Decimal(v as any).toDecimalPlaces(2).toFixed(2);
+  }
+
+  // ✅ normaliza objetos monetários enviados pelo cliente: { "CASH": "150.00" }
+  private normalizeMoneyJson(obj: Record<string, string | number> = {}) {
+    const out: Record<string, string> = {};
+    for (const [k, v] of Object.entries(obj)) {
+      out[k] = this.fmt2(v as any);
+    }
+    return out;
   }
 
   // ---------- Queries ----------
@@ -105,30 +115,38 @@ export class CashService {
   ) {
     const { tenantId, stationId, openingFloat, notes, userId } = args;
     if (!stationId) throw new BadRequestException("stationId é obrigatório.");
-    const exists = await this.prisma.cashSession.findFirst({
-      where: { tenantId, stationId, status: "OPEN" },
-    });
-    if (exists)
-      throw new ConflictException(
-        "Já existe uma sessão aberta para esta estação."
-      );
 
-    const created = await this.prisma.cashSession.create({
-      data: {
-        tenantId,
-        stationId,
-        openedByUserId: userId,
-        openingFloat,
-        totalsByMethod: {},
-        paymentsCount: {},
-        status: "OPEN",
-        notes,
-      },
-    });
+    // Não precisamos “confiar” apenas na checagem prévia; deixamos o banco garantir unicidade.
+    try {
+      const created = await this.prisma.cashSession.create({
+        data: {
+          tenantId,
+          stationId,
+          openedByUserId: userId,
+          openingFloat: this.normalizeMoneyJson(openingFloat), // ⬅️ normaliza 2 casas
+          totalsByMethod: {},
+          paymentsCount: {},
+          status: "OPEN",
+          notes,
+          openStationKey: stationId, // ⬅️ sentinela liga a UNIQUE (tenantId, openStationKey)
+        },
+      });
 
-    // this.webhooks?.emit('cash.opened', { tenantId, sessionId: created.id, stationId });
+      // this.webhooks?.emit('cash.opened', { tenantId, sessionId: created.id, stationId });
 
-    return created;
+      return created;
+    } catch (e: any) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === "P2002"
+      ) {
+        // violação de unique (tenantId, openStationKey)
+        throw new ConflictException(
+          "Já existe uma sessão aberta para esta estação."
+        );
+      }
+      throw e;
+    }
   }
 
   async createMovement(
@@ -313,6 +331,7 @@ export class CashService {
           Object.entries(byMethod).map(([k, v]) => [k, this.fmt2(v)])
         ),
         paymentsCount,
+        openStationKey: null, // ⬅️ libera a “vaga” para nova sessão OPEN
       },
     });
 
@@ -361,30 +380,32 @@ export class CashService {
         "Somente sessões CLOSED podem ser reabertas."
       );
 
-    const openExists = await this.prisma.cashSession.findFirst({
-      where: {
-        tenantId: args.tenantId,
-        stationId: s.stationId,
-        status: "OPEN",
-      },
-    });
-    if (openExists)
-      throw new ConflictException("Já existe sessão OPEN para esta estação.");
+    // Não precisamos buscar previamente por outra OPEN — deixamos o banco arbitrar a disputa.
+    try {
+      const updated = await this.prisma.cashSession.update({
+        where: { id: args.sessionId },
+        data: {
+          status: "OPEN",
+          closedAt: null,
+          notes: s.notes
+            ? `${s.notes}\n[reopen]: ${args.reason}`
+            : `[reopen]: ${args.reason}`,
+          openStationKey: s.stationId, // ⬅️ colide (P2002) se já houver outra OPEN
+        },
+      });
 
-    const updated = await this.prisma.cashSession.update({
-      where: { id: args.sessionId },
-      data: {
-        status: "OPEN",
-        closedAt: null,
-        notes: s.notes
-          ? `${s.notes}\n[reopen]: ${args.reason}`
-          : `[reopen]: ${args.reason}`,
-      },
-    });
+      // this.webhooks?.emit('cash.reopened', { tenantId: args.tenantId, sessionId: updated.id, reason: args.reason });
 
-    // this.webhooks?.emit('cash.reopened', { tenantId: args.tenantId, sessionId: updated.id, reason: args.reason });
-
-    return updated;
+      return updated;
+    } catch (e: any) {
+      if (
+        e instanceof Prisma.PrismaClientKnownRequestError &&
+        e.code === "P2002"
+      ) {
+        throw new ConflictException("Já existe sessão OPEN para esta estação.");
+      }
+      throw e;
+    }
   }
 
   // ---------- Relatórios ----------

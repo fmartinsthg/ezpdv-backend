@@ -22,7 +22,6 @@ function todayUtcYYYYMMDD() {
     let orderVersion = "";
     let orderTotal = "0.00";
     let cashSessionId = "";
-    // garante sessão OPEN (se já existir, reusa)
     await t.test("abre sessão de caixa (station)", async () => {
         cashSessionId = await (0, helpers_1.openCashSession)(helpers_1.defaultStation);
         (0, expect_1.default)(!!cashSessionId).toBe(true);
@@ -94,7 +93,6 @@ function todayUtcYYYYMMDD() {
             }
         }
         catch {
-            /* noop */
         }
     });
 });

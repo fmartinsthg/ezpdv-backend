@@ -13,6 +13,7 @@ exports.CashService = void 0;
 const common_1 = require("@nestjs/common");
 const prisma_service_1 = require("../prisma/prisma.service");
 const library_1 = require("@prisma/client/runtime/library");
+const client_1 = require("@prisma/client"); // ⬅️ para mapear P2002 (unique)
 const cash_permissions_1 = require("./policies/cash.permissions");
 let CashService = class CashService {
     constructor(prisma) {
@@ -24,6 +25,14 @@ let CashService = class CashService {
     // ✅ garante string SEMPRE com 2 casas
     fmt2(v) {
         return new library_1.Decimal(v).toDecimalPlaces(2).toFixed(2);
+    }
+    // ✅ normaliza objetos monetários enviados pelo cliente: { "CASH": "150.00" }
+    normalizeMoneyJson(obj = {}) {
+        const out = {};
+        for (const [k, v] of Object.entries(obj)) {
+            out[k] = this.fmt2(v);
+        }
+        return out;
     }
     // ---------- Queries ----------
     async listSessions(tenantId, q) {
@@ -90,25 +99,32 @@ let CashService = class CashService {
         const { tenantId, stationId, openingFloat, notes, userId } = args;
         if (!stationId)
             throw new common_1.BadRequestException("stationId é obrigatório.");
-        const exists = await this.prisma.cashSession.findFirst({
-            where: { tenantId, stationId, status: "OPEN" },
-        });
-        if (exists)
-            throw new common_1.ConflictException("Já existe uma sessão aberta para esta estação.");
-        const created = await this.prisma.cashSession.create({
-            data: {
-                tenantId,
-                stationId,
-                openedByUserId: userId,
-                openingFloat,
-                totalsByMethod: {},
-                paymentsCount: {},
-                status: "OPEN",
-                notes,
-            },
-        });
-        // this.webhooks?.emit('cash.opened', { tenantId, sessionId: created.id, stationId });
-        return created;
+        // Não precisamos “confiar” apenas na checagem prévia; deixamos o banco garantir unicidade.
+        try {
+            const created = await this.prisma.cashSession.create({
+                data: {
+                    tenantId,
+                    stationId,
+                    openedByUserId: userId,
+                    openingFloat: this.normalizeMoneyJson(openingFloat), // ⬅️ normaliza 2 casas
+                    totalsByMethod: {},
+                    paymentsCount: {},
+                    status: "OPEN",
+                    notes,
+                    openStationKey: stationId, // ⬅️ sentinela liga a UNIQUE (tenantId, openStationKey)
+                },
+            });
+            // this.webhooks?.emit('cash.opened', { tenantId, sessionId: created.id, stationId });
+            return created;
+        }
+        catch (e) {
+            if (e instanceof client_1.Prisma.PrismaClientKnownRequestError &&
+                e.code === "P2002") {
+                // violação de unique (tenantId, openStationKey)
+                throw new common_1.ConflictException("Já existe uma sessão aberta para esta estação.");
+            }
+            throw e;
+        }
     }
     async createMovement(args) {
         const { tenantId, sessionId, type, method, amount, reason, userId } = args;
@@ -236,6 +252,7 @@ let CashService = class CashService {
                 // ✅ grava já formatado com 2 casas
                 totalsByMethod: Object.fromEntries(Object.entries(byMethod).map(([k, v]) => [k, this.fmt2(v)])),
                 paymentsCount,
+                openStationKey: null, // ⬅️ libera a “vaga” para nova sessão OPEN
             },
         });
         const summary = {
@@ -268,27 +285,29 @@ let CashService = class CashService {
             throw new common_1.NotFoundException("Sessão não encontrada.");
         if (s.status !== "CLOSED")
             throw new common_1.ConflictException("Somente sessões CLOSED podem ser reabertas.");
-        const openExists = await this.prisma.cashSession.findFirst({
-            where: {
-                tenantId: args.tenantId,
-                stationId: s.stationId,
-                status: "OPEN",
-            },
-        });
-        if (openExists)
-            throw new common_1.ConflictException("Já existe sessão OPEN para esta estação.");
-        const updated = await this.prisma.cashSession.update({
-            where: { id: args.sessionId },
-            data: {
-                status: "OPEN",
-                closedAt: null,
-                notes: s.notes
-                    ? `${s.notes}\n[reopen]: ${args.reason}`
-                    : `[reopen]: ${args.reason}`,
-            },
-        });
-        // this.webhooks?.emit('cash.reopened', { tenantId: args.tenantId, sessionId: updated.id, reason: args.reason });
-        return updated;
+        // Não precisamos buscar previamente por outra OPEN — deixamos o banco arbitrar a disputa.
+        try {
+            const updated = await this.prisma.cashSession.update({
+                where: { id: args.sessionId },
+                data: {
+                    status: "OPEN",
+                    closedAt: null,
+                    notes: s.notes
+                        ? `${s.notes}\n[reopen]: ${args.reason}`
+                        : `[reopen]: ${args.reason}`,
+                    openStationKey: s.stationId, // ⬅️ colide (P2002) se já houver outra OPEN
+                },
+            });
+            // this.webhooks?.emit('cash.reopened', { tenantId: args.tenantId, sessionId: updated.id, reason: args.reason });
+            return updated;
+        }
+        catch (e) {
+            if (e instanceof client_1.Prisma.PrismaClientKnownRequestError &&
+                e.code === "P2002") {
+                throw new common_1.ConflictException("Já existe sessão OPEN para esta estação.");
+            }
+            throw e;
+        }
     }
     // ---------- Relatórios ----------
     async reportDaily(tenantId, yyyyMMdd) {

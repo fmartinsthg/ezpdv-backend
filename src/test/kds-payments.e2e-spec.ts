@@ -36,7 +36,6 @@ test("KDS + Payments + Cash (close → pay CASH w/ station → settled → KDS s
   let orderTotal = "0.00";
   let cashSessionId = "";
 
-  // garante sessão OPEN (se já existir, reusa)
   await t.test("abre sessão de caixa (station)", async () => {
     cashSessionId = await openCashSession(station);
     expect(!!cashSessionId).toBe(true);
@@ -142,7 +141,6 @@ test("KDS + Payments + Cash (close → pay CASH w/ station → settled → KDS s
         await closeCashSession(cashSessionId);
       }
     } catch {
-      /* noop */
     }
   });
 });
