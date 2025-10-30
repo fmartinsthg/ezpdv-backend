@@ -7,21 +7,18 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/**
- * ------------------------- Enums Globais -------------------------
- */
+/* ------------------------- Enums Globais ------------------------- */
 
-// Papel GLOBAL, para administração da plataforma
 enum SystemRole {
-  SUPERADMIN // pode criar/editar tenants e gerenciar contas
-  SUPPORT    // opcional, suporte limitado
-  NONE       // padrão para usuários comuns
+  SUPERADMIN
+  SUPPORT
+  NONE
 }
 
 enum TenantRole {
-  ADMIN     // dono/administrador do restaurante
-  MODERATOR // gerente/financeiro
-  USER      // atendente/garçom
+  ADMIN
+  MODERATOR
+  USER
 }
 
 enum OrderStatus {
@@ -30,10 +27,6 @@ enum OrderStatus {
   CANCELED
 }
 
-/**
- * Itens do pedido: ciclo de vida por item
- * STAGED (carrinho) -> FIRED (produzindo) -> CLOSED (fechar)| VOID (cancelar)
- */
 enum OrderItemStatus {
   STAGED
   FIRED
@@ -104,9 +97,6 @@ enum TransactionType {
   OTHER
 }
 
-/**
- * (Opcional) roteamento de produção por estação
- */
 enum PrepStation {
   KITCHEN
   BAR
@@ -128,9 +118,7 @@ enum WebhookDeliveryStatus {
   FAILED
 }
 
-/**
- * ------------------------- Multi-tenant -------------------------
- */
+/* ------------------------- Multi-tenant ------------------------- */
 
 model Tenant {
   id        String   @id @default(uuid())
@@ -145,7 +133,6 @@ model Tenant {
   sales       Sale[]
   financials  FinancialTransaction[]
 
-  // Orders & Estoque
   orders         Order[]
   orderItems     OrderItem[]
   payments       Payment[]
@@ -153,21 +140,17 @@ model Tenant {
   recipes        Recipe[]
   stockMovements StockMovement[]
 
-  // Pagamentos — entidades auxiliares
   paymentIntents  PaymentIntent[]
   paymentAttempts PaymentAttempt[]
   pixCharges      PixCharge[]
 
-  // 🔽 Back-relations para eventos/auditoria
   orderEvents     OrderEvent[]
   orderItemEvents OrderItemEvent[]
 
-  // Webhooks
   webhookEndpoints  WebhookEndpoint[] @relation("TenantWebhookEndpoint")
   webhookEvents     WebhookEvent[]    @relation("TenantWebhookEvent")
   webhookDeliveries WebhookDelivery[]
 
-  // ------------------------- Caixa (Cash Management) -------------------------
   cashSessions  CashSession[]
   cashMovements CashMovement[]
   cashCounts    CashCount[]
@@ -187,29 +170,23 @@ model User {
   financialTransactions FinancialTransaction[] @relation("UserFinancialTransactions")
   sales                 Sale[]
 
-  // Relações com pedidos
   cashierOrders  Order[] @relation("OrderCashierUser")
   createdOrders  Order[] @relation("OrderCreatedByUser")
   assignedOrders Order[] @relation("OrderAssignedToUser")
 
-  // Atores de VOID (itens do pedido)
   voidRequestedItems OrderItem[] @relation("VoidRequestedBy")
   voidApprovedItems  OrderItem[] @relation("VoidApprovedBy")
 
-  // Payments
   createdPayments     Payment[]            @relation("UserCreatedPayments")
   paymentTransactions PaymentTransaction[] @relation("UserPaymentTransactions")
 
-  // Intents criados por este usuário
   createdPaymentIntents PaymentIntent[] @relation("UserCreatedPaymentIntents")
 
-  // 🔽 Back-relations para eventos/auditoria
   orderEvents     OrderEvent[]
   orderItemEvents OrderItemEvent[]
 }
 
 model UserTenant {
-  // vínculo usuário↔tenant com papel no tenant
   userId   String
   tenantId String
   role     TenantRole @default(USER)
@@ -217,13 +194,11 @@ model UserTenant {
   user   User   @relation(fields: [userId], references: [id])
   tenant Tenant @relation(fields: [tenantId], references: [id])
 
-  @@id([userId, tenantId]) // evita duplicidade de membership
+  @@id([userId, tenantId])
   @@index([tenantId, role])
 }
 
-/**
- * ------------------------- Domínio (por tenant) -------------------------
- */
+/* ------------------------- Domínio (por tenant) ------------------------- */
 
 model Category {
   id          String   @id @default(uuid())
@@ -254,11 +229,11 @@ model Product {
   price       Decimal @db.Decimal(10, 2)
   cost        Decimal @db.Decimal(10, 2)
   barcode     String?
-  stock       Int     @default(0) // NOTA: Orders não altera este campo; usa InventoryItem
+  stock       Int     @default(0)
   isActive    Boolean @default(true)
   prepStation PrepStation?
-  categoryId String?
-  category   Category? @relation(fields: [categoryId], references: [id])
+  categoryId  String?
+  category    Category? @relation(fields: [categoryId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -319,36 +294,32 @@ model FinancialTransaction {
   @@index([tenantId, type, createdAt])
 }
 
-/**
- * ------------------------- Idempotência -------------------------
- */
+/* ------------------------- Idempotência ------------------------- */
 
 model IdempotencyKey {
   id                 String            @id @default(uuid())
   tenantId           String
-  scope              String // ex.: "orders:create"
-  key                String // UUID v4 gerado pelo cliente
+  scope              String
+  key                String
   status             IdempotencyStatus @default(PROCESSING)
   requestHash        String
   responseCode       Int?
   responseBody       Json?
   responseTruncated  Boolean           @default(false)
-  resourceType       String? // ex.: "order"
-  resourceId         String? // id do recurso principal
+  resourceType       String?
+  resourceId         String?
   errorCode          String?
   errorMessage       String?
   createdAt          DateTime          @default(now())
   updatedAt          DateTime          @updatedAt
-  expiresAt          DateTime // TTL = now + 48h
+  expiresAt          DateTime
 
   @@unique([tenantId, scope, key], name: "tenantId_scope_key")
   @@index([tenantId, scope])
   @@index([expiresAt])
 }
 
-/**
- * ------------------------- Orders e Pagamentos -------------------------
- */
+/* ------------------------- Orders e Pagamentos ------------------------- */
 
 model Order {
   id       String      @id @default(uuid())
@@ -363,7 +334,6 @@ model Order {
   idempotencyKey String?
   version        Int     @default(0)
 
-  // Atores
   createdByUserId  String
   assignedToUserId String?
   cashierUserId    String?
@@ -371,7 +341,6 @@ model Order {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Estado financeiro
   isSettled Boolean   @default(false)
   paidAt    DateTime?
 
@@ -384,10 +353,8 @@ model Order {
   payments       Payment[]
   stockMovements StockMovement[]
 
-  // intents associados a esta ordem
   paymentIntents PaymentIntent[]
 
-  // 🔽 Back-relations para eventos
   events OrderEvent[]
 
   @@unique([tenantId, idempotencyKey])
@@ -401,8 +368,8 @@ model OrderItem {
   tenantId  String
   productId String
 
-  status  OrderItemStatus @default(STAGED)
-  station PrepStation?
+  status   OrderItemStatus @default(STAGED)
+  station  PrepStation?
   closedAt DateTime?
 
   quantity  Decimal @db.Decimal(10, 3)
@@ -422,12 +389,11 @@ model OrderItem {
   product Product @relation(fields: [productId], references: [id])
   tenant  Tenant  @relation(fields: [tenantId], references: [id])
 
-  // Relações de auditoria de VOID
   voidByUser         User? @relation("VoidRequestedBy", fields: [voidByUserId], references: [id])
   voidApprovedByUser User? @relation("VoidApprovedBy", fields: [voidApprovedBy], references: [id])
 
-  // 🔽 Back-relations para eventos
   events OrderItemEvent[]
+
   @@index([tenantId, status, closedAt])
   @@index([tenantId, orderId])
   @@index([tenantId, station, status, firedAt, updatedAt])
@@ -439,12 +405,11 @@ model Payment {
   orderId  String
   tenantId String
 
-  // vínculo opcional a um intent aberto
   paymentIntentId String?
 
   method PaymentMethod
   amount Decimal       @db.Decimal(10, 2)
-  status PaymentStatus // PENDING | AUTHORIZED | CAPTURED | REFUNDED | CANCELED
+  status PaymentStatus
 
   provider      String?
   providerTxnId String?
@@ -454,29 +419,22 @@ model Payment {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
-  // ------------------------- Caixa: vínculo opcional a um turno (CashSession) -------------------------
   sessionId String?
   session   CashSession? @relation(fields: [sessionId], references: [id], onDelete: SetNull)
 
-  // Relações
   order     Order  @relation(fields: [orderId], references: [id])
   tenant    Tenant @relation(fields: [tenantId], references: [id])
   createdBy User   @relation("UserCreatedPayments", fields: [createdByUserId], references: [id])
 
-  // relação com Intent
   intent PaymentIntent? @relation(fields: [paymentIntentId], references: [id])
 
-  // Tentativas (ex.: autorizações, callbacks do PSP)
   attempts     PaymentAttempt[]   @relation("Payment_Attempts")
   transactions PaymentTransaction[]
 
-  // De-dupe robusto por evento do PSP
   @@unique([tenantId, provider, providerTxnId])
-
-  // Índices
   @@index([tenantId, orderId, createdAt])
   @@index([tenantId, status])
-  @@index([tenantId, sessionId]) // <— para consultas por sessão de caixa
+  @@index([tenantId, sessionId])
 }
 
 model PaymentIntent {
@@ -528,7 +486,7 @@ model WebhookEndpoint {
   secret    String
   events    String[]
   isActive  Boolean  @default(true)
-  version   Int      @default(0)         // <— para ETag/If-Match
+  version   Int      @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -611,18 +569,14 @@ model PaymentTransaction {
   byUserId  String
   createdAt DateTime               @default(now())
 
-  // Relações
   payment Payment @relation(fields: [paymentId], references: [id])
   byUser  User    @relation("UserPaymentTransactions", fields: [byUserId], references: [id])
 
-  // Índices
   @@index([tenantId, createdAt])
   @@index([tenantId, type])
 }
 
-/**
- * ------------------------- Estoque, Receita e Movimentação -------------------------
- */
+/* ------------------------- Estoque, Receita e Movimentação ------------------------- */
 
 model InventoryItem {
   id           String        @id @default(uuid())
@@ -632,12 +586,15 @@ model InventoryItem {
   factorToBase Decimal       @db.Decimal(10, 3)
   onHand       Decimal       @db.Decimal(10, 3)
   isIngredient Boolean       @default(false)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
 
   tenant         Tenant          @relation(fields: [tenantId], references: [id])
   recipeLines    RecipeLine[]
   stockMovements StockMovement[]
 
   @@unique([tenantId, name])
+  @@index([tenantId, isIngredient])
 }
 
 model Recipe {
@@ -645,8 +602,8 @@ model Recipe {
   productId String @unique
   tenantId  String
 
-  product Product      @relation(fields: [productId], references: [id])
-  tenant  Tenant       @relation(fields: [tenantId], references: [id])
+  product Product @relation(fields: [productId], references: [id])
+  tenant  Tenant  @relation(fields: [tenantId], references: [id])
   lines   RecipeLine[]
 }
 
@@ -658,6 +615,9 @@ model RecipeLine {
 
   recipe        Recipe        @relation(fields: [recipeId], references: [id])
   inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id])
+
+  @@unique([recipeId, inventoryItemId])
+  @@index([inventoryItemId])
 }
 
 model StockMovement {
@@ -665,28 +625,29 @@ model StockMovement {
   tenantId        String
   inventoryItemId String
   type            StockMovementType
-  qtyDelta        Decimal           @db.Decimal(10, 3) // negativo = saída (SALE/fire); positivo = entrada (ADJUSTMENT/void)
+  qtyDelta        Decimal           @db.Decimal(10, 3)
   relatedOrderId  String?
-  reason          String? // opcional para rastreabilidade
+  reason          String?
   createdAt       DateTime          @default(now())
+  uniqueScopeKey  String?           @unique
 
   tenant        Tenant        @relation(fields: [tenantId], references: [id])
   inventoryItem InventoryItem @relation(fields: [inventoryItemId], references: [id])
   order         Order?        @relation(fields: [relatedOrderId], references: [id])
 
   @@index([tenantId, inventoryItemId, createdAt])
+  @@index([tenantId, relatedOrderId])
+  @@index([tenantId, type, createdAt])
 }
 
-/**
- * ------------------------- Auditoria de Orders/Items -------------------------
- */
+/* ------------------------- Auditoria de Orders/Items ------------------------- */
 
 model OrderEvent {
   id         String      @id @default(uuid())
   tenantId   String
   orderId    String
   userId     String
-  eventType  String // e.g. CREATED, STATUS_CHANGE, CANCELED, CLOSED
+  eventType  String
   fromStatus OrderStatus?
   toStatus   OrderStatus?
   reason     String?
@@ -704,7 +665,7 @@ model OrderItemEvent {
   tenantId    String
   orderItemId String
   userId      String
-  eventType   String // e.g. CREATED, STATUS_CHANGE, VOID, FIRED, CLOSED
+  eventType   String
   fromStatus  OrderItemStatus?
   toStatus    OrderItemStatus?
   reason      String?
@@ -717,9 +678,7 @@ model OrderItemEvent {
   @@index([tenantId, orderItemId, createdAt])
 }
 
-/**
- * ------------------------- Caixa (Cash Management) -------------------------
- */
+/* ------------------------- Caixa (Cash Management) ------------------------- */
 
 enum CashSessionStatus {
   OPEN
@@ -745,27 +704,23 @@ model CashSession {
   closedAt       DateTime?
   status         CashSessionStatus @default(OPEN)
 
-  // JSONs de agregados/sumários (mantidos como stringified decimals no service)
-  openingFloat   Json              // { "CASH": "150.00" }
-  totalsByMethod Json              @default("{}") // { "CASH": "...", "CARD": "...", "PIX": "..." }
-  paymentsCount  Json              @default("{}") // { "CASH": n, "CARD": n, "PIX": n, "total": n }
+  openingFloat   Json
+  totalsByMethod Json              @default("{}")
+  paymentsCount  Json              @default("{}")
 
   notes     String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // 🔽 NOVO: sentinela para unicidade de sessão OPEN por estação
-  openStationKey String? // = stationId quando OPEN; NULL quando CLOSED
+  openStationKey String?
 
   tenant    Tenant       @relation(fields: [tenantId], references: [id])
   movements CashMovement[]
   counts    CashCount[]
-  payments  Payment[]    // back-relation de Payment.sessionId
+  payments  Payment[]
 
   @@index([tenantId, stationId, status])
   @@index([tenantId, openedAt])
-
-  // 🔒 Garante “1 OPEN por estação/tenant” sem índice parcial
   @@unique([tenantId, openStationKey])
 }
 
@@ -774,7 +729,7 @@ model CashMovement {
   tenantId        String
   sessionId       String
   type            CashMovementType
-  method          PaymentMethod    // Negócio restringe a CASH (validado na aplicação)
+  method          PaymentMethod
   amount          Decimal          @db.Decimal(10, 2)
   reason          String?
   createdByUserId String
@@ -791,7 +746,7 @@ model CashCount {
   tenantId        String
   sessionId       String
   kind            CashCountKind
-  denominations   Json          // {"0.05":10, "2":12, "50":3}
+  denominations   Json
   total           Decimal       @db.Decimal(10, 2)
   countedByUserId String
   createdAt       DateTime      @default(now())

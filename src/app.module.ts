@@ -33,50 +33,55 @@ import { PaymentIntentsModule } from "./payment-intents/payment-intents.module";
 import { PlatformModule } from "./platform/platform.module";
 import { KdsModule } from "./kds/kds.module";
 import { WebhooksModule } from "./webhooks/webhooks.module";
-
-// ⬇️ NOVO: módulo de Caixa
 import { CashModule } from "./cash/cash.module";
+
+// ⬇️ NOVO: módulo de Inventário (rotas /tenants/:tenantId/inventory/..., recipes, movements)
+import { InventoryModule } from "./inventory/inventory.module";
 
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
     PrismaModule,
+
+    // Auth / Core
     AuthModule,
     UsersModule,
+    IdempotencyModule,
+
+    // Domínio
     CategoryModule,
     ProductsModule,
     OrdersModule,
-    IdempotencyModule,
     PaymentsModule,
     PaymentIntentsModule,
-    PlatformModule,
-    WebhooksModule,
     KdsModule,
-
-    // ⬇️ adiciona o módulo de Caixa
     CashModule,
+    WebhooksModule,
+    PlatformModule,
+
+    // ⬇️ Novo domínio: Inventário (não interfere em rotas top-level)
+    InventoryModule,
   ],
   controllers: [AppController],
   providers: [
-    // Guards globais – continuam iguais
+    // Guards globais
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: RolesGuard },
     { provide: APP_GUARD, useClass: TenantContextGuard },
 
-    // Interceptors globais – continuam iguais
+    // Interceptors globais
     { provide: APP_INTERCEPTOR, useClass: TenantRouteValidationInterceptor },
     { provide: APP_INTERCEPTOR, useClass: EtagInterceptor },
   ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    // ✅ Escopa o middleware APENAS onde o header é necessário
+    // ✅ Escopa o middleware APENAS em endpoints top-level que exigem X-Tenant-Id no header
+    // (Rotas com /tenants/:tenantId/... NÃO precisam desse middleware)
     consumer.apply(HttpTenantMiddleware).forRoutes(
       { path: "categories", method: RequestMethod.ALL },
       { path: "products", method: RequestMethod.ALL }
-      // adicione outros endpoints top-level se necessário
+      // adicione aqui outros endpoints TOP-LEVEL (sem /tenants/:tenantId) conforme necessário
     );
-
-    // ❌ Removemos o `.forRoutes('*')` global para não atingir /auth/login
   }
 }
