@@ -1,3 +1,4 @@
+// src/inventory/inventory.controller.ts
 import {
   Body,
   Controller,
@@ -8,7 +9,7 @@ import {
   Put,
   Query,
   UseGuards,
-  UseInterceptors,
+  Req,
 } from "@nestjs/common";
 import { InventoryService } from "./inventory.service";
 import { CreateInventoryItemDto } from "./dto/create-inventory-item.dto";
@@ -17,14 +18,16 @@ import { AdjustInventoryItemDto } from "./dto/adjust-inventory-item.dto";
 import { UpsertRecipeDto } from "./dto/upsert-recipe.dto";
 import { ListItemsDto } from "./dto/list-items.dto";
 import { ListMovementsDto } from "./dto/list-movements.dto";
-import { Roles } from "../auth/roles.decorator";
-import { JwtAuthGuard } from "../auth/jwt-auth.guard";
-import { RolesGuard } from "../auth/roles.guard";
-import { TenantContextGuard } from "../tenant/tenant-context.guard";
-import { IdempotencyInterceptor } from "../idempotency/idempotency.interceptor";
 
+import { Roles } from "../auth/roles.decorator";
+import { JwtAuthGuard } from "../auth/jwt.guard";
+
+// ✅ Alinha com Cash
+import { RolesGuard } from "../common/guards/roles.guard";
+import { TenantContextGuard } from "../common/tenant/tenant-context.guard";
+
+@UseGuards(JwtAuthGuard, RolesGuard, TenantContextGuard)
 @Controller("tenants/:tenantId")
-@UseGuards(JwtAuthGuard, TenantContextGuard, RolesGuard)
 export class InventoryController {
   constructor(private readonly inventory: InventoryService) {}
 
@@ -38,7 +41,6 @@ export class InventoryController {
 
   @Post("inventory/items")
   @Roles("ADMIN", "MODERATOR")
-  @UseInterceptors(IdempotencyInterceptor)
   async createItem(
     @Param("tenantId") tenantId: string,
     @Body() dto: CreateInventoryItemDto
@@ -53,7 +55,6 @@ export class InventoryController {
 
   @Patch("inventory/items/:id")
   @Roles("ADMIN", "MODERATOR")
-  @UseInterceptors(IdempotencyInterceptor)
   async updateItem(
     @Param("tenantId") tenantId: string,
     @Param("id") id: string,
@@ -64,7 +65,6 @@ export class InventoryController {
 
   @Post("inventory/items/:id/adjust")
   @Roles("ADMIN", "MODERATOR")
-  @UseInterceptors(IdempotencyInterceptor)
   async adjustItem(
     @Param("tenantId") tenantId: string,
     @Param("id") id: string,
@@ -83,7 +83,6 @@ export class InventoryController {
 
   @Put("recipes/:productId")
   @Roles("ADMIN", "MODERATOR")
-  @UseInterceptors(IdempotencyInterceptor)
   async upsertRecipe(
     @Param("tenantId") tenantId: string,
     @Param("productId") productId: string,

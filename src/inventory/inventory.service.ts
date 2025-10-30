@@ -77,11 +77,21 @@ export class InventoryService {
       take: 20,
     });
 
-    const referencedBy = await this.prisma.recipeLine.findMany({
-      where: { tenantId, inventoryItemId: id },
-      select: { productId: true, qtyBase: true },
+    // 🔧 RecipeLine NÃO possui tenantId nem productId no modelo.
+    // Filtre por relação da Recipe (recipe: { tenantId }) e selecione productId via relation.
+    const referencedLines = await this.prisma.recipeLine.findMany({
+      where: { inventoryItemId: id, recipe: { tenantId } },
+      select: {
+        qtyBase: true,
+        recipe: { select: { productId: true } },
+      },
       take: 50,
     });
+
+    const referencedBy = referencedLines.map((r) => ({
+      productId: r.recipe.productId,
+      qtyBase: r.qtyBase,
+    }));
 
     return { item, recentMovs, referencedBy };
   }
@@ -92,14 +102,15 @@ export class InventoryService {
     if (dto.name) patch.name = dto.name.trim();
 
     if (dto.unit) {
-      // TODO: validar impacto em receitas existentes antes de permitir migração de unidade
+      // 🔧 Conte linhas da receita referindo este item usando a relação recipe → tenantId
       const lines = await this.prisma.recipeLine.count({
-        where: { tenantId, inventoryItemId: id },
+        where: { inventoryItemId: id, recipe: { tenantId } },
       });
-      if (lines > 0)
+      if (lines > 0) {
         throw new ConflictException(
           "Alterar unidade exigiria migração de receitas existentes"
         );
+      }
       patch.unit = dto.unit;
     }
 
@@ -134,14 +145,14 @@ export class InventoryService {
       qtyDelta: Decimal | string | number; // +/-
       reason?: string;
       relatedOrderId?: string;
-      uniqueScopeKey?: string; // para idempotência interna opcional
+      uniqueScopeKey?: string; // idempotência interna opcional
       blockIfNegative?: boolean; // padrão true
     }
   ) {
     const qtyDelta = this.q3(params.qtyDelta);
     const blockIfNegative = params.blockIfNegative !== false;
 
-    // Row lock para evitar corrida: bloqueia a linha do item
+    // Row lock para evitar corrida
     await tx.$executeRawUnsafe(
       `SELECT id FROM "InventoryItem" WHERE id = $1 AND "tenantId" = $2 FOR UPDATE`,
       params.inventoryItemId,
@@ -160,7 +171,7 @@ export class InventoryService {
       throw new ConflictException("Saldo insuficiente para a operação");
     }
 
-    // Se usar idempotência interna via uniqueScopeKey (ex.: eventos FIRE/VOID)
+    // Idempotência interna por uniqueScopeKey
     if (params.uniqueScopeKey) {
       const exists = await tx.stockMovement.findFirst({
         where: { uniqueScopeKey: params.uniqueScopeKey },
@@ -224,7 +235,6 @@ export class InventoryService {
       include: { lines: { orderBy: { inventoryItemId: "asc" } } },
     });
     if (!recipe || recipe.tenantId !== tenantId) {
-      // tolerância: se não existir, retorna vazia
       return { productId, tenantId, lines: [] as any[] };
     }
     return recipe;
@@ -238,41 +248,47 @@ export class InventoryService {
     // valida duplicatas e qty > 0
     const seen = new Set<string>();
     for (const l of dto.lines) {
-      if (seen.has(l.inventoryItemId))
+      if (seen.has(l.inventoryItemId)) {
         throw new BadRequestException("Item duplicado na receita");
+      }
       seen.add(l.inventoryItemId);
-      if (this.q3(l.qtyBase).lte(0))
+      if (this.q3(l.qtyBase).lte(0)) {
         throw new BadRequestException("qtyBase deve ser > 0");
+      }
     }
 
-    // valida existência dos itens
+    // valida existência dos itens no tenant
     const itemIds = dto.lines.map((l) => l.inventoryItemId);
     const count = await this.prisma.inventoryItem.count({
       where: { tenantId, id: { in: itemIds } },
     });
-    if (count !== itemIds.length)
+    if (count !== itemIds.length) {
       throw new BadRequestException("Algum inventoryItemId é inválido");
+    }
 
     return this.prisma.$transaction(async (tx) => {
-      await tx.recipe.upsert({
+      // upsert da receita (1 por productId)
+      const recipe = await tx.recipe.upsert({
         where: { productId },
         update: { tenantId },
         create: { productId, tenantId },
       });
 
-      // apaga e recria (MVP simples e seguro)
-      await tx.recipeLine.deleteMany({ where: { tenantId, productId } });
+      // 🔧 RecipeLine NÃO tem tenantId/productId — usa recipeId
+      await tx.recipeLine.deleteMany({ where: { recipeId: recipe.id } });
+
       await tx.recipeLine.createMany({
         data: dto.lines.map((l) => ({
-          id: crypto.randomUUID(),
-          tenantId,
-          productId,
+          recipeId: recipe.id,
           inventoryItemId: l.inventoryItemId,
           qtyBase: this.q3(l.qtyBase),
         })),
       });
 
-      return this.getRecipe(tenantId, productId);
+      return tx.recipe.findUnique({
+        where: { productId },
+        include: { lines: { orderBy: { inventoryItemId: "asc" } } },
+      });
     });
   }
 
