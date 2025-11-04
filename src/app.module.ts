@@ -58,8 +58,6 @@ import { InventoryModule } from "./inventory/inventory.module";
     CashModule,
     WebhooksModule,
     PlatformModule,
-
-    // ⬇️ Novo domínio: Inventário (não interfere em rotas top-level)
     InventoryModule,
   ],
   controllers: [AppController],

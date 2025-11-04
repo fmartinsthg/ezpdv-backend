@@ -12,7 +12,6 @@ import {
   PrismaClient,
   OrderStatus,
   OrderItemStatus,
-  StockMovementType,
   PrepStation,
 } from "@prisma/client";
 import { PrismaService } from "../prisma/prisma.service";
@@ -25,9 +24,11 @@ import { CloseOrderDto } from "./dto/close-order.dto";
 import { AuthUser } from "../auth/jwt.strategy";
 import { JwtService } from "@nestjs/jwt";
 import { WebhooksService } from "../webhooks/webhooks.service";
-import { KdsBus } from "../kds/kds.bus"; // 👈 SSE bus
+import { KdsBus } from "../kds/kds.bus";
 
-const MAX_RETRIES = 3;
+// ⬇️ NOVO: Integração com Inventário (FIRE/VOID)
+import { InventoryEventsService } from "../inventory/integration/inventory-events.service";
+
 type DbLike = Prisma.TransactionClient | PrismaClient;
 
 @Injectable()
@@ -38,7 +39,9 @@ export class OrdersService {
     private readonly prisma: PrismaService,
     private readonly jwtService: JwtService,
     private readonly webhooks: WebhooksService,
-    private readonly bus: KdsBus // 👈 injeta o bus
+    private readonly bus: KdsBus,
+    // ⬇️ NOVO
+    private readonly inventoryEvents: InventoryEventsService
   ) {}
 
   /* -------------------------- If-Match helpers -------------------------- */
@@ -61,7 +64,7 @@ export class OrdersService {
     ifMatch?: string
   ) {
     const expected = this.parseIfMatch(ifMatch);
-    if (expected == null) return; // header não enviado -> não valida
+    if (expected == null) return;
     const row = await this.prisma.order.findFirst({
       where: { id: orderId, tenantId },
       select: { version: true },
@@ -98,155 +101,6 @@ export class OrdersService {
     });
     if (!order) throw new NotFoundException("Comanda não encontrada.");
     return order;
-  }
-
-  private async computeRequiredInventory(
-    tenantId: string,
-    items: { productId: string; quantity: Prisma.Decimal }[],
-    tx: DbLike
-  ) {
-    const productIds = Array.from(new Set(items.map((i) => i.productId)));
-    const recipes = await tx.recipe.findMany({
-      where: { tenantId, productId: { in: productIds } },
-      include: { lines: true },
-    });
-
-    const recipeByProduct = new Map(recipes.map((r) => [r.productId, r.lines]));
-    const required = new Map<string, Prisma.Decimal>();
-
-    for (const it of items) {
-      const lines = recipeByProduct.get(it.productId) || [];
-      for (const line of lines) {
-        const need = new Prisma.Decimal(line.qtyBase).times(it.quantity);
-        const prev = required.get(line.inventoryItemId) || this.toDecimal(0);
-        required.set(line.inventoryItemId, prev.plus(need));
-      }
-    }
-
-    return required;
-  }
-
-  private async checkAndDebitInventorySerializable(
-    tenantId: string,
-    orderId: string,
-    required: Map<string, Prisma.Decimal>
-  ) {
-    let attempt = 0;
-    while (true) {
-      try {
-        return await this.prisma.$transaction(
-          async (tx) => {
-            const invIds = Array.from(required.keys());
-            if (invIds.length === 0) return;
-
-            const items = await tx.inventoryItem.findMany({
-              where: { tenantId, id: { in: invIds } },
-              select: { id: true, onHand: true },
-            });
-
-            for (const inv of items) {
-              const need = required.get(inv.id) || this.toDecimal(0);
-              if (new Prisma.Decimal(inv.onHand).lt(need)) {
-                throw new ConflictException(
-                  "Estoque insuficiente para produção."
-                );
-              }
-            }
-
-            for (const inv of items) {
-              const need = required.get(inv.id) || this.toDecimal(0);
-              if (need.eq(0)) continue;
-
-              const newOnHand = new Prisma.Decimal(inv.onHand).minus(need);
-
-              await tx.inventoryItem.update({
-                where: { id: inv.id },
-                data: { onHand: newOnHand },
-              });
-
-              await tx.stockMovement.create({
-                data: {
-                  tenantId,
-                  inventoryItemId: inv.id,
-                  type: StockMovementType.SALE,
-                  qtyDelta: need.negated(),
-                  relatedOrderId: orderId,
-                  reason: "ORDER_ITEM_FIRE",
-                },
-              });
-            }
-          },
-          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
-        );
-      } catch (e: any) {
-        if (
-          e?.code === "P2034" ||
-          String(e?.message || "").includes("could not serialize access")
-        ) {
-          if (++attempt >= MAX_RETRIES) throw e;
-          await new Promise((r) => setTimeout(r, 50 * attempt));
-          continue;
-        }
-        throw e;
-      }
-    }
-  }
-
-  private async creditInventorySerializable(
-    tenantId: string,
-    orderId: string,
-    toCredit: Map<string, Prisma.Decimal>
-  ) {
-    let attempt = 0;
-    while (true) {
-      try {
-        return await this.prisma.$transaction(
-          async (tx) => {
-            const invIds = Array.from(toCredit.keys());
-            if (invIds.length === 0) return;
-
-            const items = await tx.inventoryItem.findMany({
-              where: { tenantId, id: { in: invIds } },
-              select: { id: true, onHand: true },
-            });
-
-            for (const inv of items) {
-              const qty = toCredit.get(inv.id) || this.toDecimal(0);
-              if (qty.eq(0)) continue;
-
-              const newOnHand = new Prisma.Decimal(inv.onHand).plus(qty);
-
-              await tx.inventoryItem.update({
-                where: { id: inv.id },
-                data: { onHand: newOnHand },
-              });
-
-              await tx.stockMovement.create({
-                data: {
-                  tenantId,
-                  inventoryItemId: inv.id,
-                  type: StockMovementType.ADJUSTMENT,
-                  qtyDelta: qty,
-                  relatedOrderId: orderId,
-                  reason: "ORDER_ITEM_VOID_OR_CANCEL",
-                },
-              });
-            }
-          },
-          { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
-        );
-      } catch (e: any) {
-        if (
-          e?.code === "P2034" ||
-          String(e?.message || "").includes("could not serialize access")
-        ) {
-          if (++attempt >= MAX_RETRIES) throw e;
-          await new Promise((r) => setTimeout(r, 50 * attempt));
-          continue;
-        }
-        throw e;
-      }
-    }
   }
 
   /** Recalcula subtotal/total e incrementa a versão. */
@@ -336,7 +190,6 @@ export class OrdersService {
 
     const total = subtotal;
 
-    // cria a ordem (transação)
     const order = await this.prisma.$transaction(async (tx) => {
       const created = await tx.order.create({
         data: {
@@ -354,7 +207,6 @@ export class OrdersService {
         include: { items: true },
       });
 
-      // auditoria da criação
       await tx.orderEvent.create({
         data: {
           tenantId,
@@ -370,7 +222,6 @@ export class OrdersService {
       return created;
     });
 
-    // webhook fora da transação
     try {
       await this.webhooks.queueEvent(
         tenantId,
@@ -535,7 +386,6 @@ export class OrdersService {
       });
     });
 
-    // evento opcional (não crítico)
     try {
       await this.webhooks.queueEvent(tenantId, "order.items_appended", {
         orderId,
@@ -573,7 +423,7 @@ export class OrdersService {
       ...(dto.itemIds?.length ? { id: { in: dto.itemIds } } : {}),
     };
 
-    // Itens STAGED a disparar (já traz a prepStation do produto)
+    // Itens STAGED a disparar (carrega prepStation)
     const staged = await this.prisma.orderItem.findMany({
       where: whereItems,
       include: { product: { select: { prepStation: true } } },
@@ -582,19 +432,10 @@ export class OrdersService {
       return this.findOne(tenantId, orderId);
     }
 
-    // Calcula estoque a debitar
-    const required = await this.computeRequiredInventory(
-      tenantId,
-      staged.map((s) => ({
-        productId: s.productId,
-        quantity: new Prisma.Decimal(s.quantity),
-      })),
-      this.prisma
-    );
-    await this.checkAndDebitInventorySerializable(tenantId, orderId, required);
-
     const now = new Date();
+    const toStatusVersion = (order.version ?? 0) + 1; // ⬅️ base para idempotência por transição
 
+    // 1) Transição dos itens para FIRED e auditoria
     await this.prisma.$transaction(async (tx) => {
       await Promise.all(
         staged.map((s) =>
@@ -637,7 +478,20 @@ export class OrdersService {
       });
     });
 
-    // SSE (fora da transação): emite item.fired por item
+    // 2) Consumo de estoque (um handler por item) — permite saldo negativo por padrão
+    for (const s of staged) {
+      await this.inventoryEvents.onOrderItemFired({
+        tenantId,
+        orderId,
+        orderItemId: s.id,
+        productId: s.productId,
+        quantity: s.quantity,
+        toStatusVersion,
+        // blockIfNegative: false, // default já é false no InventoryEventsService
+      });
+    }
+
+    // 3) Notificações (SSE) por item fired
     for (const s of staged) {
       this.bus.publish({
         type: "item.fired",
@@ -649,7 +503,7 @@ export class OrdersService {
       });
     }
 
-    // Webhook (não crítico)
+    // 4) Webhook (não crítico)
     try {
       await this.webhooks.queueEvent(
         tenantId,
@@ -703,6 +557,9 @@ export class OrdersService {
       );
     }
 
+    const order = await this.assertOrderInTenant(tenantId, orderId);
+    const toStatusVersion = (order.version ?? 0) + 1;
+
     const item = await this.prisma.orderItem.findFirst({
       where: { id: itemId, orderId, tenantId },
       select: { id: true, status: true, productId: true, quantity: true },
@@ -714,18 +571,7 @@ export class OrdersService {
       );
     }
 
-    const toCredit = await this.computeRequiredInventory(
-      tenantId,
-      [
-        {
-          productId: item.productId,
-          quantity: new Prisma.Decimal(item.quantity),
-        },
-      ],
-      this.prisma
-    );
-    await this.creditInventorySerializable(tenantId, orderId, toCredit);
-
+    // 1) Atualiza estado do item + auditoria + recomputa totais (incrementa versão)
     await this.prisma.$transaction(async (tx) => {
       await tx.orderItem.update({
         where: { id: item.id },
@@ -738,7 +584,6 @@ export class OrdersService {
         },
       });
 
-      // Auditoria do item VOID
       await tx.orderItemEvent.create({
         data: {
           tenantId,
@@ -754,7 +599,17 @@ export class OrdersService {
       await this.recomputeOrderTotals(tenantId, orderId, tx);
     });
 
-    // evento (não crítico)
+    // 2) Estorno no inventário (entrada; idempotente por (item,version,inventoryItemId))
+    await this.inventoryEvents.onOrderItemVoidApproved({
+      tenantId,
+      orderId,
+      orderItemId: item.id,
+      productId: item.productId,
+      quantity: item.quantity,
+      toStatusVersion,
+    });
+
+    // 3) Evento (não crítico)
     try {
       await this.webhooks.queueEvent(tenantId, "order.item_voided", {
         orderId,
@@ -803,7 +658,6 @@ export class OrdersService {
         data: { status: OrderStatus.CANCELED, version: { increment: 1 } },
       });
 
-      // Auditoria da ordem
       await tx.orderEvent.create({
         data: {
           tenantId,
@@ -824,7 +678,6 @@ export class OrdersService {
       });
     });
 
-    // webhook (não crítico)
     try {
       await this.webhooks.queueEvent(tenantId, "order.canceled", { orderId });
     } catch (e) {
@@ -862,23 +715,20 @@ export class OrdersService {
     }
 
     const now = new Date();
-    let affected = 0; // 👈 quantos FIRED serão fechados (para SSE)
+    let affected = 0;
 
     const result = await this.prisma.$transaction(async (tx) => {
-      // Captura IDs dos itens FIRED antes de fechar (para auditoria)
       const firedItems = await tx.orderItem.findMany({
         where: { tenantId, orderId, status: OrderItemStatus.FIRED },
         select: { id: true },
       });
       affected = firedItems.length;
 
-      // Fecha itens
       await tx.orderItem.updateMany({
         where: { tenantId, orderId, status: OrderItemStatus.FIRED },
         data: { status: OrderItemStatus.CLOSED, closedAt: now },
       });
 
-      // Auditoria dos itens fechados
       if (firedItems.length > 0) {
         await tx.orderItemEvent.createMany({
           data: firedItems.map((fi) => ({
@@ -893,7 +743,6 @@ export class OrdersService {
         });
       }
 
-      // Atualiza totais e fecha a ordem
       await this.recomputeOrderTotals(tenantId, orderId, tx);
 
       const updatedOrder = await tx.order.update({
@@ -902,7 +751,6 @@ export class OrdersService {
         include: { items: true },
       });
 
-      // Auditoria da ordem
       await tx.orderEvent.create({
         data: {
           tenantId,
@@ -918,7 +766,6 @@ export class OrdersService {
       return updatedOrder;
     });
 
-    // SSE: notifica bump equivalente no fechamento da comanda
     if (affected > 0) {
       this.bus.publish({
         type: "ticket.bumped",
@@ -929,7 +776,6 @@ export class OrdersService {
       });
     }
 
-    // webhook (não crítico)
     try {
       await this.webhooks.queueEvent(
         tenantId,

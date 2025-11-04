@@ -13,13 +13,14 @@ const orders_controller_1 = require("./orders.controller");
 const prisma_service_1 = require("../prisma/prisma.service");
 const auth_module_1 = require("../auth/auth.module");
 const webhooks_module_1 = require("../webhooks/webhooks.module");
-const kds_module_1 = require("../kds/kds.module"); // 👈
+const kds_module_1 = require("../kds/kds.module");
+const inventory_module_1 = require("../inventory/inventory.module");
 let OrdersModule = class OrdersModule {
 };
 exports.OrdersModule = OrdersModule;
 exports.OrdersModule = OrdersModule = __decorate([
     (0, common_1.Module)({
-        imports: [auth_module_1.AuthModule, webhooks_module_1.WebhooksModule, kds_module_1.KdsModule], // 👈 importa KdsModule
+        imports: [auth_module_1.AuthModule, webhooks_module_1.WebhooksModule, kds_module_1.KdsModule, inventory_module_1.InventoryModule],
         controllers: [orders_controller_1.OrdersController],
         providers: [prisma_service_1.PrismaService, orders_service_1.OrdersService],
         exports: [orders_service_1.OrdersService],

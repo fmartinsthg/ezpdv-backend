@@ -1,4 +1,3 @@
-// src/products/dto/update-product.dto.ts
 import { PartialType, OmitType, ApiPropertyOptional } from "@nestjs/swagger";
 import { CreateProductDto } from "./create-product.dto";
 import { IsOptional, IsBoolean, IsEnum } from "class-validator";
@@ -10,14 +9,14 @@ export class UpdateProductDto extends PartialType(
 ) {
   @IsOptional()
   @IsBoolean()
-  // Ativo/inativo
   isActive?: boolean;
 
-  // 👇 redeclara prepStation aceitando null no update
+  // redeclara prepStation aceitando null no update
   @ApiPropertyOptional({
     enum: PrepStation,
     example: "KITCHEN",
     nullable: true,
+    description: "Estação de preparo; envie null para limpar",
   })
   @IsEnum(PrepStation)
   @IsOptional()

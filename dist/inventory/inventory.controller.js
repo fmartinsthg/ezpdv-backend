@@ -24,7 +24,6 @@ const list_items_dto_1 = require("./dto/list-items.dto");
 const list_movements_dto_1 = require("./dto/list-movements.dto");
 const roles_decorator_1 = require("../auth/roles.decorator");
 const jwt_guard_1 = require("../auth/jwt.guard");
-// ✅ Alinha com Cash
 const roles_guard_1 = require("../common/guards/roles.guard");
 const tenant_context_guard_1 = require("../common/tenant/tenant-context.guard");
 let InventoryController = class InventoryController {

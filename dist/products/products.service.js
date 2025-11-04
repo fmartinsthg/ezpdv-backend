@@ -10,7 +10,6 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.ProductsService = void 0;
-// src/products/products.service.ts
 const common_1 = require("@nestjs/common");
 const client_1 = require("@prisma/client");
 const prisma_service_1 = require("../prisma/prisma.service");
@@ -18,10 +17,6 @@ let ProductsService = class ProductsService {
     constructor(prisma) {
         this.prisma = prisma;
     }
-    /**
-     * SUPERADMIN é superuser (pode gerenciar tudo)
-     * ADMIN / MODERATOR também podem gerenciar.
-     */
     canManage(user) {
         const sys = user?.systemRole ? String(user.systemRole).toUpperCase() : "";
         if (sys === "SUPERADMIN")
@@ -34,7 +29,6 @@ let ProductsService = class ProductsService {
         const take = Math.min(Number(limit) || 10, 100);
         const skip = (Number(page) - 1) * take;
         const where = { tenantId };
-        // busca textual
         if (q && q.trim().length > 0) {
             where.OR = [
                 { name: { contains: q, mode: "insensitive" } },
@@ -42,20 +36,14 @@ let ProductsService = class ProductsService {
                 { barcode: { contains: q, mode: "insensitive" } },
             ];
         }
-        // filtro por categoria
-        if (categoryId) {
+        if (categoryId)
             where.categoryId = categoryId;
-        }
-        // filtro por ativo
         if (isActive !== undefined) {
-            if (typeof isActive === "boolean") {
+            if (typeof isActive === "boolean")
                 where.isActive = isActive;
-            }
-            else if (typeof isActive === "string") {
+            else if (typeof isActive === "string")
                 where.isActive = isActive.toLowerCase() === "true";
-            }
         }
-        // ordenação
         const orderBy = {
             [sortBy]: sortOrder,
         };
@@ -92,7 +80,6 @@ let ProductsService = class ProductsService {
         if (!this.canManage(user)) {
             throw new common_1.ForbiddenException("Sem permissão para criar produtos.");
         }
-        // valida categoria dentro do tenant (se enviada)
         if (data.categoryId) {
             const category = await this.prisma.category.findFirst({
                 where: { id: data.categoryId, tenantId },
@@ -106,18 +93,14 @@ let ProductsService = class ProductsService {
             return await this.prisma.product.create({
                 data: {
                     tenantId,
-                    name: data.name,
-                    description: data.description,
+                    name: data.name.trim(),
+                    description: data.description?.trim() ?? null,
                     price: new client_1.Prisma.Decimal(typeof data.price === "string" ? data.price : String(data.price)),
-                    cost: data.cost !== undefined
-                        ? new client_1.Prisma.Decimal(typeof data.cost === "string" ? data.cost : String(data.cost))
-                        : new client_1.Prisma.Decimal("0"),
-                    stock: typeof data.stock === "string"
-                        ? Number(data.stock)
-                        : data.stock,
+                    cost: new client_1.Prisma.Decimal(typeof data.cost === "string" ? data.cost : String(data.cost)),
                     categoryId: data.categoryId,
-                    isActive: true,
-                    // 👇 novo
+                    isActive: data.isActive ?? true,
+                    // ✅ novo/permitido
+                    barcode: data.barcode?.trim() ?? null,
                     prepStation: data.prepStation ?? null,
                 },
                 include: { category: { select: { id: true, name: true } } },
@@ -131,8 +114,8 @@ let ProductsService = class ProductsService {
                 throw new common_1.NotFoundException("Categoria informada não existe.");
             }
             if (err.code === "P2002") {
-                // unique (tenantId, name) ou (tenantId, barcode)
-                throw new common_1.BadRequestException("Dados duplicados para este restaurante.");
+                // unique (tenantId, name) ou (tenantId, barcode), conforme seu schema
+                throw new common_1.BadRequestException("Dados duplicados para este restaurante (name/barcode).");
             }
             throw err;
         }
@@ -141,9 +124,7 @@ let ProductsService = class ProductsService {
         if (!this.canManage(user)) {
             throw new common_1.ForbiddenException("Sem permissão para atualizar produtos.");
         }
-        // garante escopo (existe no tenant)
         await this.findOne(tenantId, id);
-        // valida nova categoria (se informada)
         if (data.categoryId) {
             const category = await this.prisma.category.findFirst({
                 where: { id: data.categoryId, tenantId },
@@ -155,17 +136,14 @@ let ProductsService = class ProductsService {
         }
         try {
             const payload = {
-                name: data.name,
-                description: data.description,
-                stock: data.stock !== undefined
-                    ? typeof data.stock === "string"
-                        ? Number(data.stock)
-                        : data.stock
-                    : undefined,
+                name: data.name?.trim(),
+                description: data.description?.trim(),
                 ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
-                // 👇 novo: só toca no campo se vier no DTO
                 ...(data.prepStation !== undefined
                     ? { prepStation: data.prepStation }
+                    : {}),
+                ...(data.barcode !== undefined
+                    ? { barcode: data.barcode?.trim() ?? null }
                     : {}),
             };
             if (data.categoryId !== undefined) {
@@ -196,7 +174,7 @@ let ProductsService = class ProductsService {
                 throw new common_1.NotFoundException("Categoria informada não existe.");
             }
             if (err.code === "P2002") {
-                throw new common_1.BadRequestException("Dados duplicados para este restaurante.");
+                throw new common_1.BadRequestException("Dados duplicados para este restaurante (name/barcode).");
             }
             throw err;
         }
@@ -205,7 +183,6 @@ let ProductsService = class ProductsService {
         if (!this.canManage(user)) {
             throw new common_1.ForbiddenException("Sem permissão para remover produtos.");
         }
-        // garante escopo (existe no tenant)
         await this.findOne(tenantId, id);
         try {
             return await this.prisma.product.delete({ where: { id } });

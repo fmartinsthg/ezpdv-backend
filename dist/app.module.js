@@ -61,7 +61,6 @@ exports.AppModule = AppModule = __decorate([
             cash_module_1.CashModule,
             webhooks_module_1.WebhooksModule,
             platform_module_1.PlatformModule,
-            // ⬇️ Novo domínio: Inventário (não interfere em rotas top-level)
             inventory_module_1.InventoryModule,
         ],
         controllers: [app_controller_1.AppController],

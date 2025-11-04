@@ -21,8 +21,6 @@ import { ListMovementsDto } from "./dto/list-movements.dto";
 
 import { Roles } from "../auth/roles.decorator";
 import { JwtAuthGuard } from "../auth/jwt.guard";
-
-// ✅ Alinha com Cash
 import { RolesGuard } from "../common/guards/roles.guard";
 import { TenantContextGuard } from "../common/tenant/tenant-context.guard";
 

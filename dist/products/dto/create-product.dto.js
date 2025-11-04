@@ -14,7 +14,7 @@ const class_validator_1 = require("class-validator");
 const swagger_1 = require("@nestjs/swagger");
 const class_transformer_1 = require("class-transformer");
 const client_1 = require("@prisma/client");
-const DECIMAL_REGEX = /^-?\d+(\.\d+)?$/; // aceita "55", "55.0", "55.00"
+const DECIMAL_REGEX = /^-?\d+(\.\d+)?$/; // "55", "55.0", "55.00"
 class CreateProductDto {
 }
 exports.CreateProductDto = CreateProductDto;
@@ -38,7 +38,7 @@ __decorate([
     (0, swagger_1.ApiProperty)({
         type: String,
         example: "15.00",
-        description: "Preço em string com 2 casas decimais",
+        description: "Preço em string com 2+ casas decimais",
     }),
     __metadata("design:type", String)
 ], CreateProductDto.prototype, "price", void 0);
@@ -50,28 +50,25 @@ __decorate([
     (0, swagger_1.ApiProperty)({
         type: String,
         example: "10.00",
-        description: "Custo em string com 2 casas decimais",
+        description: "Custo em string com 2+ casas decimais",
     }),
     __metadata("design:type", String)
 ], CreateProductDto.prototype, "cost", void 0);
-__decorate([
-    (0, class_validator_1.IsNotEmpty)({ message: "O estoque é obrigatório." }),
-    (0, class_validator_1.Matches)(/^\d+(\.\d{1,3})?$/, {
-        message: 'stock deve ser decimal em string, ex: "50.000"',
-    }),
-    (0, swagger_1.ApiProperty)({
-        type: String,
-        example: "50.000",
-        description: "Estoque em string com 3 casas decimais",
-    }),
-    __metadata("design:type", String)
-], CreateProductDto.prototype, "stock", void 0);
 __decorate([
     (0, class_validator_1.IsNotEmpty)({ message: "O ID da categoria é obrigatório." }),
     (0, class_validator_1.IsUUID)("4", { message: "categoryId deve ser um UUID v4 válido." }),
     (0, swagger_1.ApiProperty)({ example: "uuid-v4", description: "ID da categoria" }),
     __metadata("design:type", String)
 ], CreateProductDto.prototype, "categoryId", void 0);
+__decorate([
+    (0, class_validator_1.IsOptional)(),
+    (0, class_validator_1.IsString)(),
+    (0, swagger_1.ApiPropertyOptional)({
+        example: "7894900011517",
+        description: "Código de barras opcional",
+    }),
+    __metadata("design:type", String)
+], CreateProductDto.prototype, "barcode", void 0);
 __decorate([
     (0, swagger_1.ApiPropertyOptional)({
         enum: client_1.PrepStation,
@@ -83,3 +80,8 @@ __decorate([
     (0, class_transformer_1.Transform)(({ value }) => (value ? String(value).toUpperCase() : value)),
     __metadata("design:type", String)
 ], CreateProductDto.prototype, "prepStation", void 0);
+__decorate([
+    (0, swagger_1.ApiPropertyOptional)({ example: true }),
+    (0, class_validator_1.IsOptional)(),
+    __metadata("design:type", Boolean)
+], CreateProductDto.prototype, "isActive", void 0);

@@ -4,10 +4,11 @@ import { OrdersController } from "./orders.controller";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuthModule } from "../auth/auth.module";
 import { WebhooksModule } from "../webhooks/webhooks.module";
-import { KdsModule } from "../kds/kds.module"; // 👈
+import { KdsModule } from "../kds/kds.module";
+import { InventoryModule } from "../inventory/inventory.module";
 
 @Module({
-  imports: [AuthModule, WebhooksModule, KdsModule], // 👈 importa KdsModule
+  imports: [AuthModule, WebhooksModule, KdsModule, InventoryModule],
   controllers: [OrdersController],
   providers: [PrismaService, OrdersService],
   exports: [OrdersService],

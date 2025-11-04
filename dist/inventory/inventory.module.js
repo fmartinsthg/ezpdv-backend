@@ -12,7 +12,6 @@ const inventory_controller_1 = require("./inventory.controller");
 const inventory_service_1 = require("./inventory.service");
 const prisma_service_1 = require("../prisma/prisma.service");
 const inventory_events_service_1 = require("./integration/inventory-events.service");
-// ✅ Alinha com Cash: importa AuthModule para JwtService/Guards no contexto
 const auth_module_1 = require("../auth/auth.module");
 let InventoryModule = class InventoryModule {
 };
@@ -20,7 +19,7 @@ exports.InventoryModule = InventoryModule;
 exports.InventoryModule = InventoryModule = __decorate([
     (0, common_1.Module)({
         imports: [
-            auth_module_1.AuthModule, // -> entrega JwtService e demais deps de guards
+            auth_module_1.AuthModule,
         ],
         controllers: [inventory_controller_1.InventoryController],
         providers: [inventory_service_1.InventoryService, inventory_events_service_1.InventoryEventsService, prisma_service_1.PrismaService],
