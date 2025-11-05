@@ -11,7 +11,6 @@ export class UpdateProductDto extends PartialType(
   @IsBoolean()
   isActive?: boolean;
 
-  // redeclara prepStation aceitando null no update
   @ApiPropertyOptional({
     enum: PrepStation,
     example: "KITCHEN",

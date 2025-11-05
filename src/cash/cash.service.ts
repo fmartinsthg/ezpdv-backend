@@ -7,10 +7,15 @@ import {
 } from "@nestjs/common";
 import { PrismaService } from "../prisma/prisma.service";
 import { Decimal } from "@prisma/client/runtime/library";
-import { Prisma } from "@prisma/client"; // ⬅️ para mapear P2002 (unique)
+import { Prisma } from "@prisma/client";
 import { canCloseOrReopen } from "./policies/cash.permissions";
 
 type IdemMeta = { idemScope?: string; idemKey?: string };
+
+// Política padrão: UMA sessão OPEN por tenant (global).
+// Você pode flexibilizar via env se quiser manter multiestação temporariamente.
+const CASH_SINGLE_SESSION =
+  (process.env.CASH_SINGLE_SESSION ?? "true").toLowerCase() !== "false";
 
 @Injectable()
 export class CashService {
@@ -20,18 +25,35 @@ export class CashService {
     return new Decimal(v as any).toDecimalPlaces(2);
   }
 
-  // ✅ garante string SEMPRE com 2 casas
   private fmt2(v: string | number | Decimal) {
     return new Decimal(v as any).toDecimalPlaces(2).toFixed(2);
   }
 
-  // ✅ normaliza objetos monetários enviados pelo cliente: { "CASH": "150.00" }
   private normalizeMoneyJson(obj: Record<string, string | number> = {}) {
     const out: Record<string, string> = {};
     for (const [k, v] of Object.entries(obj)) {
       out[k] = this.fmt2(v as any);
     }
     return out;
+  }
+
+  // ---------- Helpers de política ----------
+  /** Indica se existe QUALQUER sessão OPEN no tenant (globalmente). */
+  async hasAnyOpenSession(tenantId: string): Promise<boolean> {
+    const count = await this.prisma.cashSession.count({
+      where: { tenantId, status: "OPEN" },
+    });
+    return count > 0;
+  }
+
+  /** Retorna a sessão OPEN mais recente do tenant ou lança NotFound. */
+  async getTenantOpenSessionOrFail(tenantId: string) {
+    const s = await this.prisma.cashSession.findFirst({
+      where: { tenantId, status: "OPEN" },
+      orderBy: { openedAt: "desc" },
+    });
+    if (!s) throw new NotFoundException("Nenhuma sessão aberta no tenant.");
+    return s;
   }
 
   // ---------- Queries ----------
@@ -67,17 +89,30 @@ export class CashService {
     return { items, page: Number(page), pageSize: Number(pageSize), total };
   }
 
+  /**
+   * Busca sessão OPEN.
+   * - Se stationId for enviado, filtra por estação (comportamento antigo).
+   * - Se não for enviado, retorna a sessão OPEN mais recente do tenant (escopo global).
+   */
   async getOpenSession(tenantId: string, stationId?: string) {
-    if (!stationId)
-      throw new BadRequestException(
-        "stationId é obrigatório (query ou X-Station-Id)."
-      );
+    if (stationId) {
+      const s = await this.prisma.cashSession.findFirst({
+        where: { tenantId, stationId, status: "OPEN" },
+      });
+      if (!s)
+        throw new NotFoundException(
+          "Nenhuma sessão aberta encontrada para a estação."
+        );
+      return s;
+    }
+    // Tenant-level (global)
     const s = await this.prisma.cashSession.findFirst({
-      where: { tenantId, stationId, status: "OPEN" },
+      where: { tenantId, status: "OPEN" },
+      orderBy: { openedAt: "desc" },
     });
     if (!s)
       throw new NotFoundException(
-        "Nenhuma sessão aberta encontrada para a estação."
+        "Nenhuma sessão aberta encontrada no tenant."
       );
     return s;
   }
@@ -114,25 +149,36 @@ export class CashService {
     } & IdemMeta
   ) {
     const { tenantId, stationId, openingFloat, notes, userId } = args;
-    if (!stationId) throw new BadRequestException("stationId é obrigatório.");
 
-    // Não precisamos “confiar” apenas na checagem prévia; deixamos o banco garantir unicidade.
+    // Política: preferimos um identificador estável se o cliente não enviar.
+    const effectiveStation = stationId?.trim() || "GLOBAL";
+
+    if (CASH_SINGLE_SESSION) {
+      // Bloqueia qualquer segunda sessão OPEN no tenant.
+      const already = await this.hasAnyOpenSession(tenantId);
+      if (already) {
+        throw new ConflictException(
+          "Já existe uma sessão aberta para este tenant."
+        );
+      }
+    }
+
     try {
       const created = await this.prisma.cashSession.create({
         data: {
           tenantId,
-          stationId,
+          stationId: effectiveStation,
           openedByUserId: userId,
-          openingFloat: this.normalizeMoneyJson(openingFloat), // ⬅️ normaliza 2 casas
+          openingFloat: this.normalizeMoneyJson(openingFloat),
           totalsByMethod: {},
           paymentsCount: {},
           status: "OPEN",
           notes,
-          openStationKey: stationId, // ⬅️ sentinela liga a UNIQUE (tenantId, openStationKey)
+          // Mantém sua sentinela para UNIQUE (tenantId, openStationKey),
+          // mas agora o valor default será "GLOBAL" quando não informado.
+          openStationKey: effectiveStation,
         },
       });
-
-      // this.webhooks?.emit('cash.opened', { tenantId, sessionId: created.id, stationId });
 
       return created;
     } catch (e: any) {
@@ -141,8 +187,9 @@ export class CashService {
         e.code === "P2002"
       ) {
         // violação de unique (tenantId, openStationKey)
+        // Com CASH_SINGLE_SESSION=true, isso funciona como trava adicional.
         throw new ConflictException(
-          "Já existe uma sessão aberta para esta estação."
+          "Já existe uma sessão aberta (conflito de estação)."
         );
       }
       throw e;
@@ -187,8 +234,6 @@ export class CashService {
       },
     });
 
-    // this.webhooks?.emit('cash.movement.created', { tenantId, sessionId, movementId: mov.id, type, amount: amt.toString() });
-
     return mov;
   }
 
@@ -221,8 +266,6 @@ export class CashService {
       },
     });
 
-    // this.webhooks?.emit('cash.count.created', { tenantId, sessionId, countId: count.id, kind, total: count.total.toString() });
-
     return count;
   }
 
@@ -249,9 +292,13 @@ export class CashService {
     if (!payment)
       throw new NotFoundException("Pagamento não encontrado neste tenant.");
 
-    // Ajuste conforme seu enum/status de pagamento elegível
     if (["CANCELED", "REFUNDED"].includes((payment as any).status)) {
       throw new ConflictException("Pagamento não elegível para reatribuição.");
+    }
+
+    // Idempotente: se já estiver na sessão, não muda.
+    if ((payment as any).sessionId === session.id) {
+      return { ok: true, paymentId: payment.id, sessionId: session.id };
     }
 
     const updated = await this.prisma.payment.update({
@@ -278,7 +325,6 @@ export class CashService {
     if (session.status !== "OPEN")
       throw new ConflictException("Sessão já está fechada.");
 
-    // Pagamentos por método
     const payments = await this.prisma.payment.findMany({
       where: { tenantId, sessionId },
       select: { method: true, amount: true },
@@ -303,7 +349,6 @@ export class CashService {
     const suprimentos = await sumMov("SUPRIMENTO");
     const sangrias = await sumMov("SANGRIA");
 
-    // ✅ use q2 para normalizar o troco inicial
     const openingCash = this.q2((session.openingFloat as any)?.CASH ?? 0);
     const cashCaptured = byMethod["CASH"] ?? this.q2(0);
     const cashExpected = openingCash
@@ -326,12 +371,11 @@ export class CashService {
         status: "CLOSED",
         closedAt: new Date(),
         notes: note ?? undefined,
-        // ✅ grava já formatado com 2 casas
         totalsByMethod: Object.fromEntries(
           Object.entries(byMethod).map(([k, v]) => [k, this.fmt2(v)])
         ),
         paymentsCount,
-        openStationKey: null, // ⬅️ libera a “vaga” para nova sessão OPEN
+        openStationKey: null, // libera a vaga para nova OPEN
       },
     });
 
@@ -351,8 +395,6 @@ export class CashService {
         ),
       },
     };
-
-    // this.webhooks?.emit('cash.closed', { tenantId, sessionId, summary });
 
     return summary;
   }
@@ -380,7 +422,16 @@ export class CashService {
         "Somente sessões CLOSED podem ser reabertas."
       );
 
-    // Não precisamos buscar previamente por outra OPEN — deixamos o banco arbitrar a disputa.
+    if (CASH_SINGLE_SESSION) {
+      // Garante que não haverá duas OPEN ao reabrir
+      const already = await this.hasAnyOpenSession(args.tenantId);
+      if (already) {
+        throw new ConflictException(
+          "Já existe sessão OPEN para este tenant. Feche-a antes de reabrir."
+        );
+      }
+    }
+
     try {
       const updated = await this.prisma.cashSession.update({
         where: { id: args.sessionId },
@@ -390,11 +441,11 @@ export class CashService {
           notes: s.notes
             ? `${s.notes}\n[reopen]: ${args.reason}`
             : `[reopen]: ${args.reason}`,
-          openStationKey: s.stationId, // ⬅️ colide (P2002) se já houver outra OPEN
+          // mantém a mesma estação que foi aberta; em modo single-session
+          // não importa, pois trava pela verificação global acima
+          openStationKey: s.stationId,
         },
       });
-
-      // this.webhooks?.emit('cash.reopened', { tenantId: args.tenantId, sessionId: updated.id, reason: args.reason });
 
       return updated;
     } catch (e: any) {
@@ -402,7 +453,7 @@ export class CashService {
         e instanceof Prisma.PrismaClientKnownRequestError &&
         e.code === "P2002"
       ) {
-        throw new ConflictException("Já existe sessão OPEN para esta estação.");
+        throw new ConflictException("Conflito com sessão OPEN existente.");
       }
       throw e;
     }
@@ -424,7 +475,6 @@ export class CashService {
         }
       }
     }
-    // ✅ retorna string com 2 casas
     return Object.fromEntries(
       Object.entries(sum).map(([k, v]) => [k, this.fmt2(v)])
     );
@@ -447,20 +497,49 @@ export class CashService {
   }
 
   // ---------- Integração com Payments ----------
-  // Chame isso no fluxo de captura (PaymentsService) usando header X-Station-Id
+  /**
+   * Vincula pagamento à sessão OPEN.
+   * - Se stationId vier, tenta primeiro por estação.
+   * - Independentemente disso, garante vínculo à sessão OPEN do tenant (mais recente).
+   * - Idempotente: não reatribui se o pagamento já possui sessionId.
+   */
   async tryAttachPaymentToOpenSession(
     tenantId: string,
     paymentId: string,
     stationId?: string
   ) {
-    if (!stationId) return;
-    const open = await this.prisma.cashSession.findFirst({
-      where: { tenantId, stationId, status: "OPEN" },
+    const payment = await this.prisma.payment.findFirst({
+      where: { id: paymentId, tenantId },
+      select: { id: true, sessionId: true },
     });
-    if (!open) return;
+    if (!payment) return;
+
+    // Se já estiver vinculado, não faz nada (idempotente).
+    if (payment.sessionId) return;
+
+    // 1) Preferência pela estação (se informada e tiver sessão OPEN).
+    if (stationId) {
+      const byStation = await this.prisma.cashSession.findFirst({
+        where: { tenantId, stationId, status: "OPEN" },
+      });
+      if (byStation) {
+        await this.prisma.payment.update({
+          where: { id: paymentId },
+          data: { sessionId: byStation.id },
+        });
+        return;
+      }
+    }
+
+    // 2) Fallback: vincular à sessão OPEN mais recente do tenant.
+    const anyOpen = await this.prisma.cashSession.findFirst({
+      where: { tenantId, status: "OPEN" },
+      orderBy: { openedAt: "desc" },
+    });
+    if (!anyOpen) return; // Guard na rota de payments já impede este caso
     await this.prisma.payment.update({
       where: { id: paymentId },
-      data: { sessionId: open.id },
+      data: { sessionId: anyOpen.id },
     });
   }
 }

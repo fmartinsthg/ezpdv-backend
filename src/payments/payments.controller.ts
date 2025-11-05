@@ -40,6 +40,12 @@ import {
   IDEMPOTENCY_FORBIDDEN,
 } from "../common/idempotency/idempotency.decorator";
 
+// ⬇️ novo
+import {
+  RequireOpenCashSessionGuard,
+  AllowWithoutCashSession,
+} from "../cash/guards/require-open-cash-session.guard";
+
 @ApiTags("payments")
 @ApiBearerAuth()
 @Controller()
@@ -51,9 +57,10 @@ export class PaymentsController {
   @Roles("SUPERADMIN", "ADMIN", "MODERATOR", "USER")
   @HttpCode(201)
   @Idempotent("payments:capture")
+  @UseGuards(RequireOpenCashSessionGuard)
   @ApiOperation({
     summary:
-      "Captura de pagamento para uma ordem CLOSED (split-friendly) + associação opcional ao Caixa via X-Station-Id",
+      "Captura de pagamento (associação automática à CashSession OPEN do dia)",
   })
   @ApiHeader({
     name: "Idempotency-Key",
@@ -69,7 +76,7 @@ export class PaymentsController {
     name: "X-Station-Id",
     required: false,
     description:
-      "Identificador da estação (ex.: bar-01). Se enviado, tentará vincular o pagamento à CashSession OPEN dessa estação.",
+      "Identificador da estação (ex.: bar-01) — opcionalmente usado para UX/relatórios",
     example: "bar-01",
   })
   @ApiParam({
@@ -87,18 +94,16 @@ export class PaymentsController {
     @Param("orderId", new ParseUUIDPipe()) orderId: string,
     @Body() dto: CreatePaymentDto,
     @CurrentUser() user: AuthUser,
-    @Req() req: any // ⬅ necessário para ler o header X-Station-Id
+    @Req() req: any
   ) {
     const actorId =
       (user as any)?.userId ?? (user as any)?.id ?? (user as any)?.sub;
-    if (!actorId) {
+    if (!actorId)
       throw new BadRequestException(
         "Invalid authenticated user (missing id/sub)."
       );
-    }
-    dto.orderId = orderId;
 
-    // ⬇︎ leitura do X-Station-Id e repasse para o service
+    dto.orderId = orderId;
     const stationId = req.headers["x-station-id"] as string | undefined;
 
     return this.payments.capture(tenantId, dto, actorId, stationId);
@@ -107,6 +112,7 @@ export class PaymentsController {
   @Get("tenants/:tenantId/orders/:orderId/payments")
   @Roles("SUPERADMIN", "ADMIN", "MODERATOR", "USER")
   @Idempotent(IDEMPOTENCY_FORBIDDEN)
+  @AllowWithoutCashSession()
   @ApiOperation({ summary: "Lista pagamentos de uma ordem" })
   async listByOrder(
     @TenantId() tenantId: string,
@@ -118,6 +124,7 @@ export class PaymentsController {
   @Get("tenants/:tenantId/payments")
   @Roles("SUPERADMIN", "ADMIN", "MODERATOR")
   @Idempotent(IDEMPOTENCY_FORBIDDEN)
+  @AllowWithoutCashSession()
   @ApiOperation({ summary: "Lista pagamentos do tenant (filtros + paginação)" })
   async listByTenant(
     @TenantId() tenantId: string,
@@ -128,7 +135,7 @@ export class PaymentsController {
 
   @Post("tenants/:tenantId/payments/:paymentId/refund")
   @Roles("SUPERADMIN", "ADMIN", "MODERATOR")
-  @UseGuards(PaymentsApprovalGuard)
+  @UseGuards(PaymentsApprovalGuard, RequireOpenCashSessionGuard)
   @Idempotent("payments:refund")
   @ApiOperation({ summary: "Estorno total/parcial de um pagamento CAPTURED" })
   @ApiHeader({ name: "Idempotency-Key", required: true })
@@ -156,15 +163,15 @@ export class PaymentsController {
       req?.approvalUser?.userId ??
       req?.approvalUser?.id ??
       req?.approvalUser?.sub;
-    if (!approvalUserId) {
+    if (!approvalUserId)
       throw new BadRequestException("Missing approval user id/sub");
-    }
+
     return this.payments.refund(tenantId, paymentId, dto, approvalUserId);
   }
 
   @Post("tenants/:tenantId/payments/:paymentId/cancel")
   @Roles("SUPERADMIN", "ADMIN", "MODERATOR")
-  @UseGuards(PaymentsApprovalGuard)
+  @UseGuards(PaymentsApprovalGuard, RequireOpenCashSessionGuard)
   @Idempotent("payments:cancel")
   @ApiOperation({ summary: "Cancelamento de um pagamento PENDING" })
   @ApiHeader({ name: "Idempotency-Key", required: true })
@@ -188,9 +195,9 @@ export class PaymentsController {
       req?.approvalUser?.userId ??
       req?.approvalUser?.id ??
       req?.approvalUser?.sub;
-    if (!approvalUserId) {
+    if (!approvalUserId)
       throw new BadRequestException("Missing approval user id/sub");
-    }
+
     return this.payments.cancel(tenantId, paymentId, dto, approvalUserId);
   }
 }

@@ -1,0 +1,503 @@
+"use strict";
+var __decorate = (this && this.__decorate) || function (decorators, target, key, desc) {
+    var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+    if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+    else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+    return c > 3 && r && Object.defineProperty(target, key, r), r;
+};
+var __metadata = (this && this.__metadata) || function (k, v) {
+    if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
+};
+var __param = (this && this.__param) || function (paramIndex, decorator) {
+    return function (target, key) { decorator(target, key, paramIndex); }
+};
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.PaymentsService = void 0;
+const common_1 = require("@nestjs/common");
+const client_1 = require("@prisma/client");
+const prisma_service_1 = require("../prisma/prisma.service");
+const payment_gateway_interface_1 = require("./gateway/payment-gateway.interface");
+const webhooks_service_1 = require("../webhooks/webhooks.service");
+// 🔽 Integração com o módulo de Caixa
+const cash_service_1 = require("../cash/cash.service");
+let PaymentsService = class PaymentsService {
+    constructor(prisma, gateway, webhooks, cash) {
+        this.prisma = prisma;
+        this.gateway = gateway;
+        this.webhooks = webhooks;
+        this.cash = cash;
+    }
+    /** Quantiza valor monetário para 2 casas decimais (consistência). */
+    q2(v) {
+        return new client_1.Prisma.Decimal(v).toDecimalPlaces(2);
+    }
+    /** Formata para string com 2 casas. */
+    fmt2(v) {
+        return this.q2(v).toFixed(2);
+    }
+    /** Converte para centavos (minor units) para gateways. */
+    toMinorUnits(amount) {
+        const v = this.q2(amount);
+        return Number(v.times(100).toFixed(0));
+    }
+    /** Serializa datas para ISO e garante amount como string 2c. */
+    serializePayment(p) {
+        return {
+            ...p,
+            amount: p?.amount !== undefined ? this.fmt2(p.amount) : p?.amount,
+            createdAt: p?.createdAt && typeof p.createdAt.toISOString === "function"
+                ? p.createdAt.toISOString()
+                : p?.createdAt,
+            updatedAt: p?.updatedAt && typeof p.updatedAt.toISOString === "function"
+                ? p.updatedAt.toISOString()
+                : p?.updatedAt,
+        };
+    }
+    async listByOrder(tenantId, orderId) {
+        const items = await this.prisma.payment.findMany({
+            where: { tenantId, orderId },
+            orderBy: { createdAt: "asc" },
+        });
+        return items.map((p) => this.serializePayment(p));
+    }
+    async listByTenant(tenantId, query) {
+        const { method, status, dateFrom, dateTo, page = 1, pageSize = 20 } = query;
+        const where = {
+            tenantId,
+            ...(method ? { method } : {}),
+            ...(status ? { status } : {}),
+            ...(dateFrom || dateTo
+                ? {
+                    createdAt: {
+                        ...(dateFrom ? { gte: new Date(dateFrom) } : {}),
+                        ...(dateTo ? { lt: new Date(dateTo) } : {}),
+                    },
+                }
+                : {}),
+        };
+        const [items, total] = await this.prisma.$transaction([
+            this.prisma.payment.findMany({
+                where,
+                orderBy: { createdAt: "desc" },
+                skip: (page - 1) * pageSize,
+                take: pageSize,
+            }),
+            this.prisma.payment.count({ where }),
+        ]);
+        return {
+            items: items.map((p) => this.serializePayment(p)),
+            total,
+            page,
+            pageSize,
+        };
+    }
+    /**
+     * Captura pagamentos APENAS para ordens CLOSED.
+     * Integração com Caixa: se `stationId` vier, associamos o pagamento à sessão OPEN da estação.
+     */
+    async capture(tenantId, dto, currentUserId, stationId) {
+        const orderId = dto.orderId;
+        const amount = this.q2(dto.amount);
+        if (amount.lte(0))
+            throw new common_1.BadRequestException("Amount must be > 0");
+        if (!currentUserId)
+            throw new common_1.BadRequestException("Missing actor user id");
+        const result = await this.prisma.$transaction(async (tx) => {
+            // Lock da order (somente CLOSED aceita pagamento)
+            const order = await tx.$queryRaw `
+          SELECT "id","status","total"
+          FROM "Order"
+          WHERE "id" = ${orderId} AND "tenantId" = ${tenantId}
+          FOR UPDATE
+        `.then((r) => r[0]);
+            if (!order)
+                throw new common_1.NotFoundException("Order not found for this tenant");
+            if (order.status !== client_1.OrderStatus.CLOSED)
+                throw new common_1.ConflictException("Only CLOSED orders accept payments");
+            // Sumários (capturado líquido = capturado - reembolsado)
+            const capturedAgg = await tx.payment.aggregate({
+                where: { tenantId, orderId, status: client_1.PaymentStatus.CAPTURED },
+                _sum: { amount: true },
+            });
+            const refundedAgg = await tx.paymentTransaction.aggregate({
+                where: {
+                    tenantId,
+                    type: client_1.PaymentTransactionType.REFUND,
+                    payment: { orderId },
+                },
+                _sum: { amount: true },
+            });
+            const alreadyCaptured = this.q2(capturedAgg._sum.amount ?? 0);
+            const alreadyRefunded = this.q2(refundedAgg._sum.amount ?? 0);
+            const netCaptured = alreadyCaptured.minus(alreadyRefunded);
+            const orderTotal = this.q2(order.total);
+            if (netCaptured.add(amount).gt(orderTotal)) {
+                throw new common_1.ConflictException({
+                    code: "PAYMENT_AMOUNT_EXCEEDS_DUE",
+                    message: "Captured sum would exceed order.total",
+                    details: {
+                        orderId: order.id,
+                        orderTotal: this.fmt2(orderTotal),
+                        capturedSum: this.fmt2(netCaptured),
+                        remainingDue: this.fmt2(orderTotal.minus(netCaptured)),
+                        requested: this.fmt2(amount),
+                    },
+                });
+            }
+            // Gateway (stub/mock)
+            const gw = await this.gateway.capture({
+                provider: dto.provider ?? "NULL",
+                amountMinor: this.toMinorUnits(amount),
+                currency: "BRL",
+                providerTxnId: dto.providerTxnId,
+                metadata: dto.metadata,
+            });
+            if (!gw.ok)
+                throw new common_1.ConflictException("Gateway capture failed");
+            // Associa a intent OPEN (se existir)
+            const openIntent = await tx.paymentIntent.findFirst({
+                where: { tenantId, orderId, status: client_1.PaymentIntentStatus.OPEN },
+                orderBy: { createdAt: "desc" },
+            });
+            // 100% relacional; trava duplicidade por (tenantId, provider, providerTxnId)
+            const data = {
+                method: dto.method,
+                amount,
+                status: client_1.PaymentStatus.CAPTURED,
+                provider: gw.provider,
+                providerTxnId: gw.providerTxnId ?? dto.providerTxnId ?? null,
+                metadata: (dto.metadata ?? client_1.Prisma.DbNull),
+                tenant: { connect: { id: tenantId } },
+                order: { connect: { id: orderId } },
+                createdBy: { connect: { id: currentUserId } },
+                ...(openIntent ? { intent: { connect: { id: openIntent.id } } } : {}),
+            };
+            let payment;
+            try {
+                payment = await tx.payment.create({ data });
+            }
+            catch (e) {
+                if (e?.code === "P2002" &&
+                    (data.provider ?? dto.provider) &&
+                    (data.providerTxnId ?? dto.providerTxnId)) {
+                    const existing = await tx.payment.findFirst({
+                        where: {
+                            tenantId,
+                            provider: data.provider,
+                            providerTxnId: data.providerTxnId,
+                        },
+                    });
+                    if (existing) {
+                        payment = existing;
+                    }
+                    else {
+                        throw e;
+                    }
+                }
+                else {
+                    throw e;
+                }
+            }
+            await tx.paymentTransaction.create({
+                data: {
+                    tenantId,
+                    paymentId: payment.id,
+                    type: client_1.PaymentTransactionType.CAPTURE,
+                    amount,
+                    byUserId: currentUserId,
+                    reason: "capture",
+                },
+            });
+            // OrderEvent: pagamento capturado
+            await tx.orderEvent.create({
+                data: {
+                    tenantId,
+                    orderId,
+                    userId: currentUserId,
+                    eventType: "PAYMENT_CAPTURED",
+                    reason: `${payment.method}:${payment.id}`,
+                },
+            });
+            // Se havia intent OPEN e quitou, marcar COMPLETED
+            const newCaptured = netCaptured.add(amount);
+            if (openIntent && newCaptured.gte(orderTotal)) {
+                await tx.paymentIntent.update({
+                    where: { id: openIntent.id },
+                    data: { status: client_1.PaymentIntentStatus.COMPLETED },
+                });
+            }
+            // Atualiza flags financeiras da Order + version bump
+            let settledNow = false;
+            if (newCaptured.gte(orderTotal)) {
+                const current = await tx.order.findUnique({
+                    where: { id: orderId },
+                    select: { paidAt: true },
+                });
+                await tx.order.update({
+                    where: { id: orderId },
+                    data: {
+                        isSettled: true,
+                        paidAt: current?.paidAt ?? new Date(),
+                        version: { increment: 1 },
+                    },
+                });
+                settledNow = true;
+                await tx.orderEvent.create({
+                    data: {
+                        tenantId,
+                        orderId,
+                        userId: currentUserId,
+                        eventType: "ORDER_SETTLED",
+                        reason: `captured=${this.fmt2(newCaptured)}`,
+                    },
+                });
+            }
+            else {
+                await tx.order.update({
+                    where: { id: orderId },
+                    data: { version: { increment: 1 } },
+                });
+            }
+            return {
+                payment,
+                summary: {
+                    orderTotal: this.fmt2(orderTotal),
+                    capturedSum: this.fmt2(newCaptured),
+                    remainingDue: this.fmt2(orderTotal.minus(newCaptured)),
+                },
+                settledNow,
+            };
+        }, { timeout: 20000 });
+        // Associação automática com a sessão de caixa OPEN da estação (fora da tx)
+        try {
+            if (stationId) {
+                await this.cash.tryAttachPaymentToOpenSession(tenantId, result.payment.id, stationId);
+            }
+        }
+        catch {
+            /* noop */
+        }
+        // Webhooks fora da transação
+        try {
+            await this.webhooks.queueEvent(tenantId, "payment.captured", {
+                orderId: dto.orderId,
+                paymentId: result.payment.id,
+                amount: this.fmt2(result.payment.amount),
+                method: result.payment.method,
+            }, { deliverNow: true });
+            if (result.settledNow) {
+                await this.webhooks.queueEvent(tenantId, "order.settled", { orderId: dto.orderId }, { deliverNow: true });
+            }
+        }
+        catch {
+            /* noop */
+        }
+        // 🔁 Normaliza retorno (amount 2c + datas ISO) + summary formatado
+        return {
+            ...this.serializePayment(result.payment),
+            summary: result.summary,
+        };
+    }
+    async refund(tenantId, paymentId, dto, approvalUserId) {
+        const amount = this.q2(dto.amount);
+        if (amount.lte(0))
+            throw new common_1.BadRequestException("Amount must be > 0");
+        if (!approvalUserId)
+            throw new common_1.BadRequestException("Missing approval user id");
+        const res = await this.prisma.$transaction(async (tx) => {
+            const payment = await tx.payment.findFirst({
+                where: { id: paymentId, tenantId },
+            });
+            if (!payment)
+                throw new common_1.NotFoundException("Payment not found");
+            if (payment.status !== client_1.PaymentStatus.CAPTURED)
+                throw new common_1.ConflictException("Only CAPTURED payments can be refunded");
+            // Lock da ordem do pagamento
+            await tx.$queryRaw `
+        SELECT "id" FROM "Order"
+        WHERE "id" = ${payment.orderId} AND "tenantId" = ${tenantId}
+        FOR UPDATE
+      `;
+            // Limite de reembolso por pagamento
+            const refundedAgg = await tx.paymentTransaction.aggregate({
+                where: { tenantId, paymentId, type: client_1.PaymentTransactionType.REFUND },
+                _sum: { amount: true },
+            });
+            const alreadyRefundedForThisPayment = this.q2(refundedAgg._sum.amount ?? 0);
+            const remainingForThisPayment = this.q2(payment.amount).minus(alreadyRefundedForThisPayment);
+            if (amount.gt(remainingForThisPayment)) {
+                throw new common_1.ConflictException("Refund amount exceeds remaining captured amount for this payment");
+            }
+            const gw = await this.gateway.refund({
+                provider: payment.provider ?? "NULL",
+                providerTxnId: payment.providerTxnId ?? "",
+                amountMinor: this.toMinorUnits(amount),
+                currency: "BRL",
+                reason: dto.reason,
+            });
+            if (!gw.ok)
+                throw new common_1.ConflictException("Gateway refund failed");
+            await tx.paymentTransaction.create({
+                data: {
+                    tenantId,
+                    paymentId: payment.id,
+                    type: client_1.PaymentTransactionType.REFUND,
+                    amount,
+                    byUserId: approvalUserId,
+                    reason: dto.reason,
+                },
+            });
+            // Atualiza status do próprio pagamento se zerar
+            const newRemainingForThisPayment = remainingForThisPayment.minus(amount);
+            if (newRemainingForThisPayment.lte(0)) {
+                await tx.payment.update({
+                    where: { id: payment.id },
+                    data: { status: client_1.PaymentStatus.REFUNDED },
+                });
+            }
+            // OrderEvent: reembolso
+            await tx.orderEvent.create({
+                data: {
+                    tenantId,
+                    orderId: payment.orderId,
+                    userId: approvalUserId,
+                    eventType: "PAYMENT_REFUNDED",
+                    reason: dto.reason ?? `refund:${this.fmt2(amount)}`,
+                },
+            });
+            // Recalcula posição financeira da ORDEM e ajusta flags
+            const orderAgg = await tx.payment.aggregate({
+                where: {
+                    tenantId,
+                    orderId: payment.orderId,
+                    status: client_1.PaymentStatus.CAPTURED,
+                },
+                _sum: { amount: true },
+            });
+            const refundsAgg = await tx.paymentTransaction.aggregate({
+                where: {
+                    tenantId,
+                    type: client_1.PaymentTransactionType.REFUND,
+                    payment: { orderId: payment.orderId },
+                },
+                _sum: { amount: true },
+            });
+            const capturedForOrder = this.q2(orderAgg._sum.amount ?? 0);
+            const refundedForOrder = this.q2(refundsAgg._sum.amount ?? 0);
+            const netCapturedForOrder = capturedForOrder.minus(refundedForOrder);
+            const orderRow = await tx.order.findUnique({
+                where: { id: payment.orderId },
+                select: { total: true, paidAt: true },
+            });
+            const orderTotal = this.q2(orderRow.total);
+            let unsettledNow = false;
+            if (netCapturedForOrder.gte(orderTotal)) {
+                await tx.order.update({
+                    where: { id: payment.orderId },
+                    data: {
+                        isSettled: true,
+                        paidAt: orderRow.paidAt ?? new Date(),
+                        version: { increment: 1 },
+                    },
+                });
+            }
+            else {
+                await tx.order.update({
+                    where: { id: payment.orderId },
+                    data: {
+                        isSettled: false,
+                        paidAt: null,
+                        version: { increment: 1 },
+                    },
+                });
+                unsettledNow = true;
+                await tx.orderEvent.create({
+                    data: {
+                        tenantId,
+                        orderId: payment.orderId,
+                        userId: approvalUserId,
+                        eventType: "ORDER_UNSETTLED",
+                        reason: `net=${this.fmt2(netCapturedForOrder)}`,
+                    },
+                });
+            }
+            const updated = await tx.payment.findUnique({
+                where: { id: payment.id },
+            });
+            return { updated, unsettledNow, orderId: payment.orderId, amount };
+        });
+        // Webhooks fora da transação
+        try {
+            await this.webhooks.queueEvent(tenantId, "payment.refunded", {
+                paymentId,
+                orderId: res.orderId,
+                amount: this.fmt2(res.amount),
+            }, { deliverNow: true });
+            if (res.unsettledNow) {
+                await this.webhooks.queueEvent(tenantId, "order.unsettled", { orderId: res.orderId }, { deliverNow: true });
+            }
+        }
+        catch {
+            /* noop */
+        }
+        return this.serializePayment(res.updated);
+    }
+    async cancel(tenantId, paymentId, dto, approvalUserId) {
+        if (!approvalUserId)
+            throw new common_1.BadRequestException("Missing approval user id");
+        const updated = await this.prisma.$transaction(async (tx) => {
+            const payment = await tx.payment.findFirst({
+                where: { id: paymentId, tenantId },
+            });
+            if (!payment)
+                throw new common_1.NotFoundException("Payment not found");
+            if (payment.status !== client_1.PaymentStatus.PENDING)
+                throw new common_1.ConflictException("Only PENDING payments can be canceled");
+            const gw = await this.gateway.cancel({
+                provider: payment.provider ?? "NULL",
+                providerTxnId: payment.providerTxnId ?? "",
+                reason: dto.reason,
+            });
+            if (!gw.ok)
+                throw new common_1.ConflictException("Gateway cancel failed");
+            const up = await tx.payment.update({
+                where: { id: payment.id },
+                data: { status: client_1.PaymentStatus.CANCELED },
+            });
+            await tx.paymentTransaction.create({
+                data: {
+                    tenantId,
+                    paymentId: payment.id,
+                    type: client_1.PaymentTransactionType.CANCEL,
+                    amount: this.q2(0),
+                    byUserId: approvalUserId,
+                    reason: dto.reason ?? "cancel",
+                },
+            });
+            await tx.orderEvent.create({
+                data: {
+                    tenantId,
+                    orderId: payment.orderId,
+                    userId: approvalUserId,
+                    eventType: "PAYMENT_CANCELED",
+                    reason: dto.reason ?? "cancel",
+                },
+            });
+            return up;
+        });
+        try {
+            await this.webhooks.queueEvent(tenantId, "payment.canceled", { paymentId, orderId: updated.orderId }, { deliverNow: true });
+        }
+        catch {
+            /* noop */
+        }
+        return this.serializePayment(updated);
+    }
+};
+exports.PaymentsService = PaymentsService;
+exports.PaymentsService = PaymentsService = __decorate([
+    (0, common_1.Injectable)(),
+    __param(1, (0, common_1.Inject)(payment_gateway_interface_1.PAYMENT_GATEWAY)),
+    __metadata("design:paramtypes", [prisma_service_1.PrismaService, Object, webhooks_service_1.WebhooksService,
+        cash_service_1.CashService])
+], PaymentsService);

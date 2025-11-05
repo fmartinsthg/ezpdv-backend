@@ -3,10 +3,10 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
-} from '@nestjs/common';
-import { PrismaService } from '../prisma/prisma.service';
-import { CreateCategoryDto } from './dto/create-category.dto';
-import { UpdateCategoryDto } from './dto/update-category.dto';
+} from "@nestjs/common";
+import { PrismaService } from "../prisma/prisma.service";
+import { CreateCategoryDto } from "./dto/create-category.dto";
+import { UpdateCategoryDto } from "./dto/update-category.dto";
 
 @Injectable()
 export class CategoryService {
@@ -16,7 +16,7 @@ export class CategoryService {
   async getActiveCategoriesWithProductCount(tenantId: string) {
     const categories = await this.prisma.category.findMany({
       where: { tenantId, isActive: true },
-      orderBy: { name: 'asc' },
+      orderBy: { name: "asc" },
       select: {
         id: true,
         name: true,
@@ -37,7 +37,7 @@ export class CategoryService {
           },
         });
         return { ...category, productCount };
-      }),
+      })
     );
     return results;
   }
@@ -49,7 +49,7 @@ export class CategoryService {
   async findAll(tenantId: string) {
     return this.prisma.category.findMany({
       where: { tenantId },
-      orderBy: { name: 'asc' },
+      orderBy: { name: "asc" },
       select: {
         id: true,
         name: true,
@@ -66,15 +66,15 @@ export class CategoryService {
     params: {
       page?: number;
       limit?: number;
-      sortBy?: 'name' | 'createdAt' | 'updatedAt';
-      sortOrder?: 'asc' | 'desc';
-    },
+      sortBy?: "name" | "createdAt" | "updatedAt";
+      sortOrder?: "asc" | "desc";
+    }
   ) {
     const page = Number(params.page ?? 1);
     const take = Math.min(Number(params.limit ?? 10), 100);
     const skip = (page - 1) * take;
-    const sortBy = params.sortBy ?? 'name';
-    const sortOrder = params.sortOrder ?? 'asc';
+    const sortBy = params.sortBy ?? "name";
+    const sortOrder = params.sortOrder ?? "asc";
 
     const [categories, total] = await Promise.all([
       this.prisma.category.findMany({
@@ -115,7 +115,7 @@ export class CategoryService {
         updatedAt: true,
       },
     });
-    if (!category) throw new NotFoundException('Categoria não encontrada');
+    if (!category) throw new NotFoundException("Categoria não encontrada");
     return category;
   }
 
@@ -129,15 +129,15 @@ export class CategoryService {
             id: true,
             name: true,
             price: true,
-            stock: true,
-            barcode: true,
+            cost: true,
             isActive: true,
+            prepStation: true,
           },
         },
       },
     });
 
-    if (!category) throw new NotFoundException('Categoria não encontrada');
+    if (!category) throw new NotFoundException("Categoria não encontrada");
     return category;
   }
 
@@ -152,7 +152,7 @@ export class CategoryService {
     });
     if (exists) {
       throw new BadRequestException(
-        'Já existe uma categoria com este nome neste restaurante',
+        "Já existe uma categoria com este nome neste restaurante"
       );
     }
 
@@ -176,20 +176,20 @@ export class CategoryService {
       });
     } catch (error: any) {
       if (
-        error.code === 'P2002' &&
-        error.meta?.target?.includes('tenantId_name')
+        error.code === "P2002" &&
+        error.meta?.target?.includes("tenantId_name")
       ) {
         throw new ConflictException(
-          'Já existe uma categoria com este nome neste restaurante.',
+          "Já existe uma categoria com este nome neste restaurante."
         );
       }
-      if (error.code === 'P2003') {
+      if (error.code === "P2003") {
         // FK inválida (ex.: parentId não existe no tenant)
-        throw new BadRequestException('Categoria pai inválida.');
+        throw new BadRequestException("Categoria pai inválida.");
       }
-      if (error.code === '22P02') {
+      if (error.code === "22P02") {
         // UUID inválido
-        throw new BadRequestException('IDs devem ser UUIDs válidos.');
+        throw new BadRequestException("IDs devem ser UUIDs válidos.");
       }
       throw error;
     }
@@ -201,7 +201,7 @@ export class CategoryService {
       where: { id, tenantId },
       select: { id: true, name: true },
     });
-    if (!existing) throw new NotFoundException('Categoria não encontrada');
+    if (!existing) throw new NotFoundException("Categoria não encontrada");
 
     // Se trocar o nome, valida unicidade por tenant
     if (data.name && data.name !== existing.name) {
@@ -213,7 +213,7 @@ export class CategoryService {
       });
       if (nameExists) {
         throw new BadRequestException(
-          'Já existe uma categoria com este nome neste restaurante',
+          "Já existe uma categoria com este nome neste restaurante"
         );
       }
     }
@@ -246,18 +246,18 @@ export class CategoryService {
       });
     } catch (error: any) {
       if (
-        error.code === 'P2002' &&
-        error.meta?.target?.includes('tenantId_name')
+        error.code === "P2002" &&
+        error.meta?.target?.includes("tenantId_name")
       ) {
         throw new ConflictException(
-          'Já existe uma categoria com este nome neste restaurante.',
+          "Já existe uma categoria com este nome neste restaurante."
         );
       }
-      if (error.code === 'P2025') {
-        throw new NotFoundException('Categoria não encontrada');
+      if (error.code === "P2025") {
+        throw new NotFoundException("Categoria não encontrada");
       }
-      if (error.code === '22P02') {
-        throw new BadRequestException('IDs devem ser UUIDs válidos.');
+      if (error.code === "22P02") {
+        throw new BadRequestException("IDs devem ser UUIDs válidos.");
       }
       throw error;
     }
@@ -283,11 +283,11 @@ export class CategoryService {
         },
       });
     } catch (error: any) {
-      if (error.code === 'P2025') {
-        throw new NotFoundException('Categoria não encontrada');
+      if (error.code === "P2025") {
+        throw new NotFoundException("Categoria não encontrada");
       }
-      if (error.code === '22P02') {
-        throw new BadRequestException('IDs devem ser UUIDs válidos.');
+      if (error.code === "22P02") {
+        throw new BadRequestException("IDs devem ser UUIDs válidos.");
       }
       throw error;
     }
@@ -309,11 +309,11 @@ export class CategoryService {
         },
       });
     } catch (error: any) {
-      if (error.code === 'P2025') {
-        throw new NotFoundException('Categoria não encontrada');
+      if (error.code === "P2025") {
+        throw new NotFoundException("Categoria não encontrada");
       }
-      if (error.code === '22P02') {
-        throw new BadRequestException('IDs devem ser UUIDs válidos.');
+      if (error.code === "22P02") {
+        throw new BadRequestException("IDs devem ser UUIDs válidos.");
       }
       throw error;
     }
@@ -329,8 +329,8 @@ export class CategoryService {
     try {
       return await this.prisma.category.delete({ where: { id } });
     } catch (error: any) {
-      if (error.code === 'P2025') {
-        throw new NotFoundException('Categoria não encontrada');
+      if (error.code === "P2025") {
+        throw new NotFoundException("Categoria não encontrada");
       }
       throw error;
     }
@@ -347,7 +347,7 @@ export class CategoryService {
 
     if (productCount > 0) {
       throw new BadRequestException(
-        'Não é possível excluir uma categoria que contém produtos',
+        "Não é possível excluir uma categoria que contém produtos"
       );
     }
 
@@ -379,20 +379,20 @@ export class CategoryService {
       description?: string;
       exactMatch?: boolean;
       isActive?: boolean;
-    },
+    }
   ) {
     const { name, description, exactMatch = false, isActive } = params;
 
     const where: any = { tenantId };
 
     if (name) {
-      where.name = exactMatch ? name : { contains: name, mode: 'insensitive' };
+      where.name = exactMatch ? name : { contains: name, mode: "insensitive" };
     }
 
     if (description) {
       where.description = exactMatch
         ? description
-        : { contains: description, mode: 'insensitive' };
+        : { contains: description, mode: "insensitive" };
     }
 
     if (isActive !== undefined) {
@@ -401,7 +401,7 @@ export class CategoryService {
 
     return this.prisma.category.findMany({
       where,
-      orderBy: { name: 'asc' },
+      orderBy: { name: "asc" },
       select: {
         id: true,
         name: true,
@@ -420,7 +420,7 @@ export class CategoryService {
   async findSubcategories(tenantId: string, parentId: string) {
     return this.prisma.category.findMany({
       where: { tenantId, parentId, isActive: true },
-      orderBy: { name: 'asc' },
+      orderBy: { name: "asc" },
       select: {
         id: true,
         name: true,
@@ -435,7 +435,7 @@ export class CategoryService {
   async getCategoryHierarchy(tenantId: string) {
     const categories = await this.prisma.category.findMany({
       where: { tenantId, isActive: true },
-      orderBy: { name: 'asc' },
+      orderBy: { name: "asc" },
     });
 
     type CategoryNode = (typeof categories)[number] & {
@@ -450,7 +450,7 @@ export class CategoryService {
           children: buildTree(category.id),
         }));
     };
-
+    
     return buildTree();
   }
 }

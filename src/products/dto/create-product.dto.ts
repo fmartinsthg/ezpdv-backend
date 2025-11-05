@@ -45,22 +45,12 @@ export class CreateProductDto {
   })
   cost!: string;
 
-
   @IsNotEmpty({ message: "O ID da categoria é obrigatório." })
   @IsUUID("4", { message: "categoryId deve ser um UUID v4 válido." })
   @ApiProperty({ example: "uuid-v4", description: "ID da categoria" })
   categoryId!: string;
 
-  // ✅ barcode opcional (para leitura por scanner)
-  @IsOptional()
-  @IsString()
-  @ApiPropertyOptional({
-    example: "7894900011517",
-    description: "Código de barras opcional",
-  })
-  barcode?: string;
-
-  // ✅ estação de preparo opcional (roteamento KDS)
+  // estação de preparo opcional (KDS)
   @ApiPropertyOptional({
     enum: PrepStation,
     example: "BAR",
@@ -71,7 +61,6 @@ export class CreateProductDto {
   @Transform(({ value }) => (value ? String(value).toUpperCase() : value))
   prepStation?: PrepStation;
 
-  // opcional: ativo por padrão
   @ApiPropertyOptional({ example: true })
   @IsOptional()
   isActive?: boolean;

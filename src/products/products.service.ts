@@ -42,7 +42,6 @@ export class ProductsService {
       where.OR = [
         { name: { contains: q, mode: "insensitive" } },
         { description: { contains: q, mode: "insensitive" } },
-        { barcode: { contains: q, mode: "insensitive" } },
       ];
     }
 
@@ -55,7 +54,7 @@ export class ProductsService {
     }
 
     const orderBy: Prisma.ProductOrderByWithRelationInput = {
-      [sortBy]: sortOrder,
+      [sortBy]: sortOrder as "asc" | "desc",
     };
 
     const [items, total] = await Promise.all([
@@ -101,7 +100,7 @@ export class ProductsService {
       });
       if (!category) {
         throw new NotFoundException(
-          "Categoria não encontrada para este restaurante."
+          "Categoria não encontrado para este restaurante."
         );
       }
     }
@@ -120,8 +119,6 @@ export class ProductsService {
           ),
           categoryId: data.categoryId,
           isActive: data.isActive ?? true,
-          // ✅ novo/permitido
-          barcode: data.barcode?.trim() ?? null,
           prepStation: data.prepStation ?? null,
         },
         include: { category: { select: { id: true, name: true } } },
@@ -134,9 +131,9 @@ export class ProductsService {
         throw new NotFoundException("Categoria informada não existe.");
       }
       if (err.code === "P2002") {
-        // unique (tenantId, name) ou (tenantId, barcode), conforme seu schema
+        // unique (tenantId, name)
         throw new BadRequestException(
-          "Dados duplicados para este restaurante (name/barcode)."
+          "Dados duplicados para este restaurante (name)."
         );
       }
       throw err;
@@ -175,9 +172,6 @@ export class ProductsService {
         ...(data.prepStation !== undefined
           ? { prepStation: data.prepStation }
           : {}),
-        ...(data.barcode !== undefined
-          ? { barcode: data.barcode?.trim() ?? null }
-          : {}),
       };
 
       if (data.categoryId !== undefined) {
@@ -214,7 +208,7 @@ export class ProductsService {
       }
       if (err.code === "P2002") {
         throw new BadRequestException(
-          "Dados duplicados para este restaurante (name/barcode)."
+          "Dados duplicados para este restaurante (name)."
         );
       }
       throw err;

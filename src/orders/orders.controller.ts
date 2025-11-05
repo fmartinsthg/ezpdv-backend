@@ -38,6 +38,12 @@ import {
 } from "../common/idempotency/idempotency.decorator";
 import { presentOrder } from "./order.presenter";
 
+// ⬇️ novo
+import {
+  RequireOpenCashSessionGuard,
+  AllowWithoutCashSession,
+} from "../cash/guards/require-open-cash-session.guard";
+
 @ApiTags("orders")
 @ApiBearerAuth()
 @UseGuards(JwtAuthGuard, RolesGuard) // TenantContext guard global já ativo
@@ -60,12 +66,13 @@ export class OrdersController {
   @ApiParam({ name: "tenantId", type: "string", format: "uuid" })
   @Roles("ADMIN", "MODERATOR", "USER")
   @Idempotent("orders:create")
+  @UseGuards(RequireOpenCashSessionGuard)
   @Post()
   async create(
     @TenantId() tenantId: string,
     @CurrentUser() user: AuthUser,
     @Body() dto: CreateOrderDto,
-    @Headers("idempotency-key") _idempotencyKey?: string // o interceptor já valida/usa
+    @Headers("idempotency-key") _idempotencyKey?: string
   ) {
     const order = await this.ordersService.create(tenantId, user, dto);
     return presentOrder(order);
@@ -75,7 +82,8 @@ export class OrdersController {
   @ApiResponse({ status: 200 })
   @ApiParam({ name: "tenantId", type: "string", format: "uuid" })
   @Roles("ADMIN", "MODERATOR", "USER")
-  @Idempotent(IDEMPOTENCY_FORBIDDEN) // evita clientes enviarem headers idem por engano
+  @Idempotent(IDEMPOTENCY_FORBIDDEN)
+  @AllowWithoutCashSession()
   @Get()
   async findAll(
     @TenantId() tenantId: string,
@@ -83,10 +91,7 @@ export class OrdersController {
     @Query() query: OrdersQueryDto
   ) {
     const result = await this.ordersService.findAll(tenantId, user, query);
-    return {
-      ...result,
-      items: result.items.map(presentOrder),
-    };
+    return { ...result, items: result.items.map(presentOrder) };
   }
 
   @ApiOperation({ summary: "Obter comanda por ID (detalhe)" })
@@ -94,6 +99,7 @@ export class OrdersController {
   @ApiParam({ name: "tenantId", type: "string", format: "uuid" })
   @Roles("ADMIN", "MODERATOR", "USER")
   @Idempotent(IDEMPOTENCY_FORBIDDEN)
+  @AllowWithoutCashSession()
   @Get(":id")
   async findOne(
     @TenantId() tenantId: string,
@@ -122,6 +128,7 @@ export class OrdersController {
   @ApiParam({ name: "tenantId", type: "string", format: "uuid" })
   @Roles("ADMIN", "MODERATOR", "USER")
   @Idempotent(["orders:append-items", "orders:items:append"])
+  @UseGuards(RequireOpenCashSessionGuard)
   @Post(":id/items")
   async appendItems(
     @TenantId() tenantId: string,
@@ -155,6 +162,7 @@ export class OrdersController {
   @ApiParam({ name: "tenantId", type: "string", format: "uuid" })
   @Roles("ADMIN", "MODERATOR", "USER")
   @Idempotent("orders:fire")
+  @UseGuards(RequireOpenCashSessionGuard)
   @Post(":id/fire")
   async fireItems(
     @TenantId() tenantId: string,
@@ -193,6 +201,7 @@ export class OrdersController {
   @ApiParam({ name: "tenantId", type: "string", format: "uuid" })
   @Roles("ADMIN", "MODERATOR", "USER")
   @Idempotent(["orders:void-item", "orders:items:void"])
+  @UseGuards(RequireOpenCashSessionGuard)
   @Post(":id/items/:itemId/void")
   async voidItem(
     @TenantId() tenantId: string,
@@ -203,9 +212,8 @@ export class OrdersController {
     @Headers("x-approval-token") approvalToken?: string,
     @Headers("if-match") ifMatch?: string
   ) {
-    if (!approvalToken) {
+    if (!approvalToken)
       throw new ForbiddenException("Aprovação requerida (X-Approval-Token).");
-    }
     const order = await this.ordersService.voidItem(
       tenantId,
       user,
@@ -230,6 +238,7 @@ export class OrdersController {
   @ApiParam({ name: "tenantId", type: "string", format: "uuid" })
   @Roles("ADMIN", "MODERATOR")
   @Idempotent("orders:cancel")
+  @UseGuards(RequireOpenCashSessionGuard)
   @Post(":id/cancel")
   async cancel(
     @TenantId() tenantId: string,
@@ -253,8 +262,9 @@ export class OrdersController {
   })
   @ApiResponse({ status: 200 })
   @ApiParam({ name: "tenantId", type: "string", format: "uuid" })
-  @Roles("ADMIN", "MODERATOR", "USER") // garçom pode fechar
+  @Roles("ADMIN", "MODERATOR", "USER")
   @Idempotent("orders:close")
+  @UseGuards(RequireOpenCashSessionGuard)
   @Post(":id/close")
   async close(
     @TenantId() tenantId: string,

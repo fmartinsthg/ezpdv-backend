@@ -228,8 +228,6 @@ model Product {
   description String?
   price       Decimal @db.Decimal(10, 2)
   cost        Decimal @db.Decimal(10, 2)
-  barcode     String?
-  stock       Int     @default(0)
   isActive    Boolean @default(true)
   prepStation PrepStation?
   categoryId  String?
@@ -244,9 +242,7 @@ model Product {
   recipe     Recipe?
 
   @@unique([tenantId, name])
-  @@unique([tenantId, barcode])
   @@index([tenantId, name])
-  @@index([tenantId, barcode])
   @@index([tenantId, prepStation])
   @@map("products")
 }
@@ -636,9 +632,10 @@ model StockMovement {
   order         Order?        @relation(fields: [relatedOrderId], references: [id])
 
   @@index([tenantId, inventoryItemId, createdAt])
-  @@index([tenantId, relatedOrderId])
+  @@index([tenantId, relatedOrderId, createdAt]) // <— inclui createdAt para paginação/relato
   @@index([tenantId, type, createdAt])
 }
+
 
 /* ------------------------- Auditoria de Orders/Items ------------------------- */
 

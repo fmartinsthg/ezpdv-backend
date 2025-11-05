@@ -20,16 +20,24 @@ import { JwtAuthGuard } from "../auth/jwt.guard";
 import { RolesGuard } from "../common/guards/roles.guard";
 import { TenantContextGuard } from "../common/tenant/tenant-context.guard";
 
+// ⬇️ novo
+import {
+  RequireOpenCashSessionGuard,
+  AllowWithoutCashSession,
+} from "./guards/require-open-cash-session.guard";
+
 @UseGuards(JwtAuthGuard, RolesGuard, TenantContextGuard)
 @Controller("tenants/:tenantId/cash")
 export class CashController {
   constructor(private readonly service: CashService) {}
 
+  @AllowWithoutCashSession()
   @Get("sessions")
   list(@Param("tenantId") tenantId: string, @Query() q: any) {
     return this.service.listSessions(tenantId, q);
   }
 
+  @AllowWithoutCashSession()
   @Get("sessions/open")
   getOpen(
     @Param("tenantId") tenantId: string,
@@ -41,6 +49,7 @@ export class CashController {
     return this.service.getOpenSession(tenantId, sid);
   }
 
+  @AllowWithoutCashSession()
   @Get("sessions/:sessionId")
   detail(
     @Param("tenantId") tenantId: string,
@@ -49,6 +58,7 @@ export class CashController {
     return this.service.getSessionDetail(tenantId, sessionId);
   }
 
+  @AllowWithoutCashSession()
   @Post("sessions/open")
   open(
     @Param("tenantId") tenantId: string,
@@ -67,6 +77,7 @@ export class CashController {
     });
   }
 
+  @UseGuards(RequireOpenCashSessionGuard)
   @Post("sessions/:sessionId/movements")
   movement(
     @Param("tenantId") tenantId: string,
@@ -87,6 +98,7 @@ export class CashController {
     });
   }
 
+  @UseGuards(RequireOpenCashSessionGuard)
   @Post("sessions/:sessionId/counts")
   count(
     @Param("tenantId") tenantId: string,
@@ -106,6 +118,7 @@ export class CashController {
     });
   }
 
+  @UseGuards(RequireOpenCashSessionGuard)
   @Post("sessions/:sessionId/reassign-payment")
   reassign(
     @Param("tenantId") tenantId: string,
@@ -123,6 +136,7 @@ export class CashController {
     });
   }
 
+  @UseGuards(RequireOpenCashSessionGuard)
   @Post("sessions/:sessionId/close")
   close(
     @Param("tenantId") tenantId: string,
@@ -140,6 +154,7 @@ export class CashController {
     });
   }
 
+  @UseGuards(RequireOpenCashSessionGuard)
   @Post("sessions/:sessionId/reopen")
   reopen(
     @Param("tenantId") tenantId: string,
@@ -157,6 +172,7 @@ export class CashController {
     });
   }
 
+  @AllowWithoutCashSession()
   @Get("reports/daily")
   reportDaily(
     @Param("tenantId") tenantId: string,
@@ -165,6 +181,7 @@ export class CashController {
     return this.service.reportDaily(tenantId, date);
   }
 
+  @AllowWithoutCashSession()
   @Get("reports/sessions-export")
   export(@Param("tenantId") tenantId: string, @Query() q: any) {
     return this.service.exportSessions(tenantId, q);
