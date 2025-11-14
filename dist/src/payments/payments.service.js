@@ -18,14 +18,18 @@ const client_1 = require("@prisma/client");
 const prisma_service_1 = require("../prisma/prisma.service");
 const payment_gateway_interface_1 = require("./gateway/payment-gateway.interface");
 const webhooks_service_1 = require("../webhooks/webhooks.service");
-// 🔽 Integração com o módulo de Caixa
 const cash_service_1 = require("../cash/cash.service");
+// 🔽 NOVO: Integra com Intents para fechar ciclo automaticamente
+const payment_intents_service_1 = require("../payment-intents/payment-intents.service");
 let PaymentsService = class PaymentsService {
-    constructor(prisma, gateway, webhooks, cash) {
+    constructor(prisma, gateway, webhooks, cash, 
+    // 🔽 NOVO: injeta o serviço de intents
+    intents) {
         this.prisma = prisma;
         this.gateway = gateway;
         this.webhooks = webhooks;
         this.cash = cash;
+        this.intents = intents;
     }
     /** Quantiza valor monetário para 2 casas decimais (consistência). */
     q2(v) {
@@ -258,6 +262,8 @@ let PaymentsService = class PaymentsService {
                     data: { version: { increment: 1 } },
                 });
             }
+            // ✅ NOVO: garante que um Intent OPEN (se existir) seja completado
+            await this.intents.tryCompleteIntentForOrder(tx, tenantId, orderId);
             return {
                 payment,
                 summary: {
@@ -421,6 +427,8 @@ let PaymentsService = class PaymentsService {
                     },
                 });
             }
+            // ✅ NOVO: após reembolso, reavalia o Intent OPEN
+            await this.intents.tryCompleteIntentForOrder(tx, tenantId, payment.orderId);
             const updated = await tx.payment.findUnique({
                 where: { id: payment.id },
             });
@@ -483,6 +491,8 @@ let PaymentsService = class PaymentsService {
                     reason: dto.reason ?? "cancel",
                 },
             });
+            // ✅ NOVO: um cancel PENDING não altera captura, mas garantimos consistência
+            await this.intents.tryCompleteIntentForOrder(tx, tenantId, payment.orderId);
             return up;
         });
         try {
@@ -499,5 +509,6 @@ exports.PaymentsService = PaymentsService = __decorate([
     (0, common_1.Injectable)(),
     __param(1, (0, common_1.Inject)(payment_gateway_interface_1.PAYMENT_GATEWAY)),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService, Object, webhooks_service_1.WebhooksService,
-        cash_service_1.CashService])
+        cash_service_1.CashService,
+        payment_intents_service_1.PaymentIntentsService])
 ], PaymentsService);

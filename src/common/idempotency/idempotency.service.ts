@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
 } from "@nestjs/common";
 import { Prisma, IdempotencyStatus } from "@prisma/client";
 import { PrismaService } from "../../prisma/prisma.service";
@@ -13,16 +14,16 @@ import {
 export type BeginResult =
   | { action: "REPLAY"; responseCode: number; responseBody: any }
   | { action: "PROCEED"; recordId: string }
-  | { action: "IN_PROGRESS" };
+  | { action: "IN_PROGRESS"; retryAfter: number };
 
 @Injectable()
 export class IdempotencyService {
+  private readonly log = new Logger("IdempotencyService");
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Exposto para debug/telemetria se necessário */
   public readonly allowedScopes = IDEMPOTENCY_ALLOWED_SCOPES;
 
-  /** Mapa de sinônimos → escopo CANÔNICO */
+  /** ⚙️ Mapa de sinônimos → escopo CANÔNICO */
   private readonly scopeMap: Record<string, string> = {
     // Orders
     "orders:append-items": "orders:append-items",
@@ -33,28 +34,42 @@ export class IdempotencyService {
     "orders:cancel": "orders:cancel",
     "orders:close": "orders:close",
     "orders:create": "orders:create",
-    // Payments
+
+    // Payments (captura/estorno/cancelamento)
     "orders:payments:capture": "payments:capture",
     "payments:capture": "payments:capture",
     "payments:refund": "payments:refund",
     "payments:cancel": "payments:cancel",
+
+    // Payments — INTENTS (NOVO)
+    // Todos os aliases abaixo serão tratados como "payments:intent:create"
+    "payments:intent:create": "payments:intent:create",
+    "payments:intent:upsert": "payments:intent:create",
+    "payment-intents:create": "payments:intent:create",
+    "payment-intents:upsert": "payments:intent:create",
+
     // Webhooks
     "webhooks:create:endpoints": "webhooks:endpoints:create",
+    "webhooks:endpoints:create": "webhooks:endpoints:create",
     "webhooks:replay": "webhooks:replay",
+
+    // Inventory
+    "inventory:create-item": "inventory:create-item",
+    "inventory:items:create": "inventory:create-item",
+    "inventory:update-item": "inventory:update-item",
+    "inventory:items:update": "inventory:update-item",
+    "inventory:adjust-item": "inventory:adjust-item",
+    "inventory:items:adjust": "inventory:adjust-item",
+    "inventory:upsert-recipe": "inventory:upsert-recipe",
+    "inventory:recipes:upsert": "inventory:upsert-recipe",
   };
 
-  /** Retorna a forma canônica do escopo (ou o próprio se não houver mapeamento). */
   public canonicalScope(input: string): string {
     const s = (input || "").trim();
     return this.scopeMap[s] || s;
   }
 
-  /**
-   * Valida headers de idempotência:
-   *  - scopeHeader presente e pertencente ao conjunto permitido no handler (com sinônimos);
-   *  - keyHeader presente.
-   *  - (opcional) verifica também contra a allowlist global (defensivo).
-   */
+  /** Valida escopo/keys nos headers. */
   public validateHeadersOrThrow(
     allowedFromHandler: string[] | string,
     scopeHeader?: string,
@@ -77,22 +92,16 @@ export class IdempotencyService {
         "Escopo de idempotência não permitido para este endpoint."
       );
     }
-    // Checagem extra contra allowlist global (hardening)
     if (!IDEMPOTENCY_ALLOWED_SCOPES.has(canonicalHeader)) {
       throw new BadRequestException(
         "Escopo de idempotência não é suportado globalmente."
       );
     }
-
     if (!keyHeader) {
       throw new BadRequestException("Idempotency-Key é obrigatório.");
     }
   }
 
-  /**
-   * Registra a chave (primeira vez) ou detecta condições de REPLAY/IN_PROGRESS/RETRY.
-   * Sempre persiste escopo **canônico**.
-   */
   public async beginOrReplay(
     tenantId: string,
     scope: string,
@@ -109,7 +118,7 @@ export class IdempotencyService {
       now.getTime() + IDEMPOTENCY_DEFAULTS.TTL_HOURS * 3600 * 1000
     );
 
-    // Caminho comum: primeira execução → cria registro em PROCESSING
+    // 1) Primeira execução → cria PROCESSING
     try {
       const created = await this.prisma.idempotencyKey.create({
         data: {
@@ -124,16 +133,15 @@ export class IdempotencyService {
       });
       return { action: "PROCEED", recordId: created.id };
     } catch (e: any) {
-      if (e?.code !== "P2002") throw e; // não é unique → propaga
+      if (e?.code !== "P2002") throw e;
     }
 
-    // Já existe (mesma chave no mesmo tenant/escopo)
+    // 2) Já existe (tenantId+scope+key)
     const existing = await this.prisma.idempotencyKey.findUnique({
       where: { tenantId_scope_key: { tenantId, scope: canonical, key } },
     });
 
     if (!existing) {
-      // Condição rara de visibilidade do índice → tenta criar novamente
       const created = await this.prisma.idempotencyKey.create({
         data: {
           tenantId,
@@ -148,7 +156,7 @@ export class IdempotencyService {
       return { action: "PROCEED", recordId: created.id };
     }
 
-    // Expirado → reabre janela
+    // Expirado (snapshot TTL) → reabre
     if (
       existing.expiresAt <= now ||
       existing.status === IdempotencyStatus.EXPIRED
@@ -170,7 +178,7 @@ export class IdempotencyService {
       return { action: "PROCEED", recordId: updated.id };
     }
 
-    // SUCCEEDED → REPLAY (somente se payload idêntico)
+    // SUCCEEDED → REPLAY (se payload idêntico)
     if (existing.status === IdempotencyStatus.SUCCEEDED) {
       if (existing.requestHash !== requestHash) {
         throw new ConflictException("IDEMPOTENCY_PAYLOAD_MISMATCH");
@@ -182,7 +190,7 @@ export class IdempotencyService {
       };
     }
 
-    // FAILED → reprocessa (abre novamente)
+    // FAILED → reprocessa
     if (existing.status === IdempotencyStatus.FAILED) {
       const updated = await this.prisma.idempotencyKey.update({
         where: { id: existing.id },
@@ -198,14 +206,45 @@ export class IdempotencyService {
       return { action: "PROCEED", recordId: updated.id };
     }
 
-    // PROCESSING → o Interceptor retornará 429/Retry-After
-    return { action: "IN_PROGRESS" };
+    // PROCESSING → checa STALE_TAKEOVER
+    if (existing.status === IdempotencyStatus.PROCESSING) {
+      const ageMs = now.getTime() - new Date(existing.updatedAt).getTime();
+      const staleMs = IDEMPOTENCY_DEFAULTS.STALE_TAKEOVER_SECONDS * 1000;
+
+      if (ageMs >= staleMs) {
+        const updated = await this.prisma.idempotencyKey.update({
+          where: { id: existing.id },
+          data: {
+            status: IdempotencyStatus.PROCESSING,
+            requestHash,
+            responseBody: Prisma.DbNull,
+            responseCode: null,
+            responseTruncated: false,
+            errorCode: null,
+            errorMessage: null,
+          },
+          select: { id: true },
+        });
+        this.log.warn(
+          `STALE_TAKEOVER scope=${canonical} key=${key} tenant=${tenantId}`
+        );
+        return { action: "PROCEED", recordId: updated.id };
+      }
+
+      const retryAfter = Math.max(
+        IDEMPOTENCY_DEFAULTS.RETRY_AFTER_SECONDS,
+        Math.ceil((staleMs - ageMs) / 1000)
+      );
+      return { action: "IN_PROGRESS", retryAfter };
+    }
+
+    return {
+      action: "IN_PROGRESS",
+      retryAfter: IDEMPOTENCY_DEFAULTS.RETRY_AFTER_SECONDS,
+    };
   }
 
-  /**
-   * Marca SUCCEEDED com snapshot (até X bytes) + hints de recurso.
-   * Se exceder o limite, grava um corpo mínimo com `truncated: true`.
-   */
+  /** SUCCEEDED com snapshot (truncado se necessário). */
   public async succeed(
     recordId: string,
     responseCode: number,
@@ -234,7 +273,6 @@ export class IdempotencyService {
         truncated = true;
       }
     } catch {
-      // fallback: se não serializa, guarda payload mínimo
       bodyToStore = {
         resourceId: options?.resourceId ?? null,
         truncated: true,
@@ -255,7 +293,7 @@ export class IdempotencyService {
     });
   }
 
-  /** Marca FAILED e persiste um erro curto (até 500 chars). */
+  /** FAILED com erro curto. */
   public async fail(
     recordId: string,
     errorCode: string,

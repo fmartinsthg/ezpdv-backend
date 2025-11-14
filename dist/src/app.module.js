@@ -17,6 +17,7 @@ const roles_guard_1 = require("./auth/roles.guard");
 const tenant_1 = require("./common/tenant");
 const etag_interceptor_1 = require("./common/http/etag.interceptor");
 const http_tenant_middleware_1 = require("./common/middleware/http-tenant.middleware");
+const idempotency_interceptor_1 = require("./common/idempotency/idempotency.interceptor");
 const prisma_module_1 = require("./prisma/prisma.module");
 const auth_module_1 = require("./auth/auth.module");
 const users_module_1 = require("./users/users.module");
@@ -30,15 +31,12 @@ const platform_module_1 = require("./platform/platform.module");
 const kds_module_1 = require("./kds/kds.module");
 const webhooks_module_1 = require("./webhooks/webhooks.module");
 const cash_module_1 = require("./cash/cash.module");
-// ⬇️ NOVO: módulo de Inventário (rotas /tenants/:tenantId/inventory/..., recipes, movements)
 const inventory_module_1 = require("./inventory/inventory.module");
 let AppModule = class AppModule {
     configure(consumer) {
-        // ✅ Escopa o middleware APENAS em endpoints top-level que exigem X-Tenant-Id no header
-        // (Rotas com /tenants/:tenantId/... NÃO precisam desse middleware)
-        consumer.apply(http_tenant_middleware_1.HttpTenantMiddleware).forRoutes({ path: "categories", method: common_1.RequestMethod.ALL }, { path: "products", method: common_1.RequestMethod.ALL }
-        // adicione aqui outros endpoints TOP-LEVEL (sem /tenants/:tenantId) conforme necessário
-        );
+        consumer
+            .apply(http_tenant_middleware_1.HttpTenantMiddleware)
+            .forRoutes({ path: "categories", method: common_1.RequestMethod.ALL }, { path: "products", method: common_1.RequestMethod.ALL });
     }
 };
 exports.AppModule = AppModule;
@@ -69,9 +67,10 @@ exports.AppModule = AppModule = __decorate([
             { provide: core_1.APP_GUARD, useClass: jwt_guard_1.JwtAuthGuard },
             { provide: core_1.APP_GUARD, useClass: roles_guard_1.RolesGuard },
             { provide: core_1.APP_GUARD, useClass: tenant_1.TenantContextGuard },
-            // Interceptors globais
+            // Interceptors globais (ordem intencional)
             { provide: core_1.APP_INTERCEPTOR, useClass: tenant_1.TenantRouteValidationInterceptor },
             { provide: core_1.APP_INTERCEPTOR, useClass: etag_interceptor_1.EtagInterceptor },
+            { provide: core_1.APP_INTERCEPTOR, useClass: idempotency_interceptor_1.IdempotencyInterceptor },
         ],
     })
 ], AppModule);

@@ -21,6 +21,8 @@ import {
 import { EtagInterceptor } from "./common/http/etag.interceptor";
 import { HttpTenantMiddleware } from "./common/middleware/http-tenant.middleware";
 
+import { IdempotencyInterceptor } from "./common/idempotency/idempotency.interceptor";
+
 import { PrismaModule } from "./prisma/prisma.module";
 import { AuthModule } from "./auth/auth.module";
 import { UsersModule } from "./users/users.module";
@@ -34,8 +36,6 @@ import { PlatformModule } from "./platform/platform.module";
 import { KdsModule } from "./kds/kds.module";
 import { WebhooksModule } from "./webhooks/webhooks.module";
 import { CashModule } from "./cash/cash.module";
-
-// ⬇️ NOVO: módulo de Inventário (rotas /tenants/:tenantId/inventory/..., recipes, movements)
 import { InventoryModule } from "./inventory/inventory.module";
 
 @Module({
@@ -67,19 +67,19 @@ import { InventoryModule } from "./inventory/inventory.module";
     { provide: APP_GUARD, useClass: RolesGuard },
     { provide: APP_GUARD, useClass: TenantContextGuard },
 
-    // Interceptors globais
+    // Interceptors globais (ordem intencional)
     { provide: APP_INTERCEPTOR, useClass: TenantRouteValidationInterceptor },
     { provide: APP_INTERCEPTOR, useClass: EtagInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: IdempotencyInterceptor },
   ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer) {
-    // ✅ Escopa o middleware APENAS em endpoints top-level que exigem X-Tenant-Id no header
-    // (Rotas com /tenants/:tenantId/... NÃO precisam desse middleware)
-    consumer.apply(HttpTenantMiddleware).forRoutes(
-      { path: "categories", method: RequestMethod.ALL },
-      { path: "products", method: RequestMethod.ALL }
-      // adicione aqui outros endpoints TOP-LEVEL (sem /tenants/:tenantId) conforme necessário
-    );
+    consumer
+      .apply(HttpTenantMiddleware)
+      .forRoutes(
+        { path: "categories", method: RequestMethod.ALL },
+        { path: "products", method: RequestMethod.ALL }
+      );
   }
 }

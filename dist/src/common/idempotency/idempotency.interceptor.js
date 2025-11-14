@@ -8,6 +8,7 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
+var IdempotencyInterceptor_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.IdempotencyInterceptor = void 0;
 // src/common/idempotency/idempotency.interceptor.ts
@@ -19,22 +20,30 @@ const idempotency_service_1 = require("./idempotency.service");
 const idempotency_decorator_1 = require("./idempotency.decorator");
 const idempotency_constants_1 = require("./idempotency.constants");
 const idempotency_util_1 = require("./idempotency.util");
-let IdempotencyInterceptor = class IdempotencyInterceptor {
+const REENTRANT_FLAG = Symbol("IDEMPOTENCY_INTERCEPTOR_VISITED");
+let IdempotencyInterceptor = IdempotencyInterceptor_1 = class IdempotencyInterceptor {
     constructor(reflector, service) {
         this.reflector = reflector;
         this.service = service;
+        this.logger = new common_1.Logger(IdempotencyInterceptor_1.name);
     }
     intercept(context, next) {
         const raw = this.reflector.get(idempotency_decorator_1.IDEMPOTENCY_SCOPE_META, context.getHandler());
-        // Handler não idempotente → segue normal
+        // Rota não idempotente
         if (!raw)
             return next.handle();
         const allowed = Array.isArray(raw) ? raw : [raw];
-        // Política FORBIDDEN: recusa qualquer header idempotente nesta rota
         const isForbidden = allowed.length === 1 && allowed[0] === idempotency_decorator_1.IDEMPOTENCY_FORBIDDEN;
         const http = context.switchToHttp();
         const req = http.getRequest();
         const res = http.getResponse();
+        // --- Proteção reentrante por request ---
+        if (req[REENTRANT_FLAG]) {
+            // Interceptor já executou nesta mesma request
+            return next.handle();
+        }
+        req[REENTRANT_FLAG] = true;
+        // ---------------------------------------
         if (isForbidden) {
             const hasIdemHeaders = !!req.headers[idempotency_constants_1.IDEMPOTENCY_HEADERS.KEY] ||
                 !!req.headers[idempotency_constants_1.IDEMPOTENCY_HEADERS.SCOPE];
@@ -49,21 +58,20 @@ let IdempotencyInterceptor = class IdempotencyInterceptor {
         if (!tenantId) {
             throw new common_1.BadRequestException("tenantId ausente no contexto.");
         }
-        // Valida cabeçalhos + sinônimos; checa presença de key
+        // Validação headers
         this.service.validateHeadersOrThrow(allowed, scopeHeader, keyHeader);
         if (!(0, idempotency_util_1.isUuidV4)(keyHeader)) {
             throw new common_1.BadRequestException("Idempotency-Key deve ser UUID v4.");
         }
-        // Hash determinístico do BODY
+        // Hash determinístico do body
         const bodyString = (0, idempotency_util_1.canonicalJsonStringify)(req.body ?? {});
         const requestHash = (0, idempotency_util_1.sha256Hex)(bodyString);
-        // Canoniza o escopo para persistir e fazer replay
         const effectiveScope = this.service.canonicalScope(scopeHeader);
         return new rxjs_1.Observable((subscriber) => {
             (async () => {
                 try {
                     const begin = await this.service.beginOrReplay(tenantId, effectiveScope, keyHeader, requestHash);
-                    // Sempre ecoar os headers idempotentes para facilitar debug
+                    // Ecoa cabeçalhos p/ debug
                     res.setHeader("Idempotency-Key", keyHeader);
                     res.setHeader("Idempotency-Scope", scopeHeader);
                     if (begin.action === "REPLAY") {
@@ -74,11 +82,12 @@ let IdempotencyInterceptor = class IdempotencyInterceptor {
                         return;
                     }
                     if (begin.action === "IN_PROGRESS") {
-                        // Concorrência com a mesma key → 429 + Retry-After
+                        // Duplicidade real (concorrência externa) ou reentrância evitada
+                        this.logger.warn(`IN_PROGRESS tenant=${tenantId} scope=${effectiveScope} key=${keyHeader}`);
                         res.setHeader("Retry-After", String(idempotency_constants_1.IDEMPOTENCY_DEFAULTS.RETRY_AFTER_SECONDS));
                         throw new common_1.HttpException("IDEMPOTENCY_IN_PROGRESS", common_1.HttpStatus.TOO_MANY_REQUESTS);
                     }
-                    // PROCEED → injeta contexto para @IdempotencyCtx()
+                    // PROCEED → injeta contexto idempotente
                     req.idempotency = {
                         key: keyHeader,
                         scope: effectiveScope,
@@ -89,7 +98,7 @@ let IdempotencyInterceptor = class IdempotencyInterceptor {
                     next
                         .handle()
                         .pipe((0, operators_1.tap)(async (data) => {
-                        // Persistir snapshot e hints de recurso (orderId etc.)
+                        // Snapshot + hints (orderId etc.)
                         const resource = this.extractResource(effectiveScope, data);
                         await this.service.succeed(begin.recordId, res.statusCode || common_1.HttpStatus.OK, data, resource);
                     }), (0, operators_1.catchError)((err) => {
@@ -121,15 +130,13 @@ let IdempotencyInterceptor = class IdempotencyInterceptor {
     extractResource(scope, body) {
         if (!body || typeof body !== "object")
             return {};
-        // orders:* → prioriza id ou orderId
         if (scope.startsWith("orders:")) {
             const id = body.id ?? body.orderId;
             if (typeof id === "string")
                 return { resourceType: "order", resourceId: id };
         }
-        // payments:* → vincula ao orderId
         if (scope.startsWith("payments:")) {
-            const oid = body.orderId ?? body.order?.id ?? body?.summary?.orderId;
+            const oid = body?.orderId ?? body?.order?.id ?? body?.summary?.orderId ?? undefined;
             if (typeof oid === "string")
                 return { resourceType: "order", resourceId: oid };
         }
@@ -137,7 +144,7 @@ let IdempotencyInterceptor = class IdempotencyInterceptor {
     }
 };
 exports.IdempotencyInterceptor = IdempotencyInterceptor;
-exports.IdempotencyInterceptor = IdempotencyInterceptor = __decorate([
+exports.IdempotencyInterceptor = IdempotencyInterceptor = IdempotencyInterceptor_1 = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [core_1.Reflector,
         idempotency_service_1.IdempotencyService])

@@ -13,10 +13,9 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.OrdersController = void 0;
+// src/orders/orders.controller.ts
 const common_1 = require("@nestjs/common");
 const orders_service_1 = require("./orders.service");
-const jwt_guard_1 = require("../auth/jwt.guard");
-const roles_guard_1 = require("../common/guards/roles.guard");
 const roles_decorator_1 = require("../common/decorators/roles.decorator");
 const current_user_decorator_1 = require("../auth/current-user.decorator");
 const tenant_decorator_1 = require("../common/tenant/tenant.decorator");
@@ -29,7 +28,7 @@ const close_order_dto_1 = require("./dto/close-order.dto");
 const swagger_1 = require("@nestjs/swagger");
 const idempotency_decorator_1 = require("../common/idempotency/idempotency.decorator");
 const order_presenter_1 = require("./order.presenter");
-// ⬇️ novo
+// Guards específicos de caixa (método a método)
 const require_open_cash_session_guard_1 = require("../cash/guards/require-open-cash-session.guard");
 let OrdersController = class OrdersController {
     constructor(ordersService) {
@@ -270,8 +269,6 @@ __decorate([
 exports.OrdersController = OrdersController = __decorate([
     (0, swagger_1.ApiTags)("orders"),
     (0, swagger_1.ApiBearerAuth)(),
-    (0, common_1.UseGuards)(jwt_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard) // TenantContext guard global já ativo
-    ,
     (0, common_1.Controller)("tenants/:tenantId/orders"),
     __metadata("design:paramtypes", [orders_service_1.OrdersService])
 ], OrdersController);

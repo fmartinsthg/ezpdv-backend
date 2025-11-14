@@ -7,6 +7,7 @@ import {
   HttpStatus,
   Injectable,
   NestInterceptor,
+  Logger,
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import { Observable } from "rxjs";
@@ -26,8 +27,12 @@ import {
   sha256Hex,
 } from "./idempotency.util";
 
+const REENTRANT_FLAG = Symbol("IDEMPOTENCY_INTERCEPTOR_VISITED");
+
 @Injectable()
 export class IdempotencyInterceptor implements NestInterceptor {
+  private readonly logger = new Logger(IdempotencyInterceptor.name);
+
   constructor(
     private readonly reflector: Reflector,
     private readonly service: IdempotencyService
@@ -39,18 +44,24 @@ export class IdempotencyInterceptor implements NestInterceptor {
       context.getHandler()
     );
 
-    // Handler não idempotente → segue normal
+    // Rota não idempotente
     if (!raw) return next.handle();
 
     const allowed = Array.isArray(raw) ? raw : [raw];
-
-    // Política FORBIDDEN: recusa qualquer header idempotente nesta rota
     const isForbidden =
       allowed.length === 1 && allowed[0] === IDEMPOTENCY_FORBIDDEN;
 
     const http = context.switchToHttp();
     const req = http.getRequest() as any;
     const res = http.getResponse();
+
+    // --- Proteção reentrante por request ---
+    if (req[REENTRANT_FLAG]) {
+      // Interceptor já executou nesta mesma request
+      return next.handle();
+    }
+    req[REENTRANT_FLAG] = true;
+    // ---------------------------------------
 
     if (isForbidden) {
       const hasIdemHeaders =
@@ -72,17 +83,15 @@ export class IdempotencyInterceptor implements NestInterceptor {
       throw new BadRequestException("tenantId ausente no contexto.");
     }
 
-    // Valida cabeçalhos + sinônimos; checa presença de key
+    // Validação headers
     this.service.validateHeadersOrThrow(allowed, scopeHeader, keyHeader);
     if (!isUuidV4(keyHeader)) {
       throw new BadRequestException("Idempotency-Key deve ser UUID v4.");
     }
 
-    // Hash determinístico do BODY
+    // Hash determinístico do body
     const bodyString = canonicalJsonStringify(req.body ?? {});
     const requestHash = sha256Hex(bodyString);
-
-    // Canoniza o escopo para persistir e fazer replay
     const effectiveScope = this.service.canonicalScope(scopeHeader);
 
     return new Observable((subscriber) => {
@@ -95,7 +104,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
             requestHash
           );
 
-          // Sempre ecoar os headers idempotentes para facilitar debug
+          // Ecoa cabeçalhos p/ debug
           res.setHeader("Idempotency-Key", keyHeader);
           res.setHeader("Idempotency-Scope", scopeHeader);
 
@@ -108,7 +117,10 @@ export class IdempotencyInterceptor implements NestInterceptor {
           }
 
           if (begin.action === "IN_PROGRESS") {
-            // Concorrência com a mesma key → 429 + Retry-After
+            // Duplicidade real (concorrência externa) ou reentrância evitada
+            this.logger.warn(
+              `IN_PROGRESS tenant=${tenantId} scope=${effectiveScope} key=${keyHeader}`
+            );
             res.setHeader(
               "Retry-After",
               String(IDEMPOTENCY_DEFAULTS.RETRY_AFTER_SECONDS)
@@ -119,7 +131,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
             );
           }
 
-          // PROCEED → injeta contexto para @IdempotencyCtx()
+          // PROCEED → injeta contexto idempotente
           req.idempotency = {
             key: keyHeader,
             scope: effectiveScope,
@@ -132,7 +144,7 @@ export class IdempotencyInterceptor implements NestInterceptor {
             .handle()
             .pipe(
               tap(async (data) => {
-                // Persistir snapshot e hints de recurso (orderId etc.)
+                // Snapshot + hints (orderId etc.)
                 const resource = this.extractResource(effectiveScope, data);
                 await this.service.succeed(
                   begin.recordId,
@@ -175,15 +187,14 @@ export class IdempotencyInterceptor implements NestInterceptor {
     body: any
   ): { resourceType?: string; resourceId?: string } {
     if (!body || typeof body !== "object") return {};
-    // orders:* → prioriza id ou orderId
     if (scope.startsWith("orders:")) {
       const id = body.id ?? body.orderId;
       if (typeof id === "string")
         return { resourceType: "order", resourceId: id };
     }
-    // payments:* → vincula ao orderId
     if (scope.startsWith("payments:")) {
-      const oid = body.orderId ?? body.order?.id ?? body?.summary?.orderId;
+      const oid =
+        body?.orderId ?? body?.order?.id ?? body?.summary?.orderId ?? undefined;
       if (typeof oid === "string")
         return { resourceType: "order", resourceId: oid };
     }

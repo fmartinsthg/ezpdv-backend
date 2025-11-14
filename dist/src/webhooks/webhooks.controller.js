@@ -16,8 +16,6 @@ exports.WebhooksController = void 0;
 // src/webhooks/webhooks.controller.ts
 const common_1 = require("@nestjs/common");
 const swagger_1 = require("@nestjs/swagger");
-const jwt_guard_1 = require("../auth/jwt.guard");
-const roles_guard_1 = require("../common/guards/roles.guard");
 const roles_decorator_1 = require("../common/decorators/roles.decorator");
 const tenant_decorator_1 = require("../common/tenant/tenant.decorator");
 const idempotency_decorator_1 = require("../common/idempotency/idempotency.decorator");
@@ -55,10 +53,10 @@ let WebhooksController = class WebhooksController {
 };
 exports.WebhooksController = WebhooksController;
 __decorate([
-    (0, swagger_1.ApiOperation)({ summary: 'Criar endpoint' }),
-    (0, roles_decorator_1.Roles)('SUPERADMIN', 'ADMIN'),
-    (0, idempotency_decorator_1.Idempotent)('webhooks:endpoints:create'),
-    (0, common_1.Post)('endpoints'),
+    (0, swagger_1.ApiOperation)({ summary: "Criar endpoint" }),
+    (0, roles_decorator_1.Roles)("SUPERADMIN", "ADMIN"),
+    (0, idempotency_decorator_1.Idempotent)("webhooks:endpoints:create"),
+    (0, common_1.Post)("endpoints"),
     __param(0, (0, tenant_decorator_1.TenantId)()),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
@@ -66,44 +64,45 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], WebhooksController.prototype, "createEndpoint", null);
 __decorate([
-    (0, swagger_1.ApiOperation)({ summary: 'Listar endpoints' }),
-    (0, roles_decorator_1.Roles)('SUPERADMIN', 'ADMIN'),
-    (0, common_1.Get)('endpoints'),
+    (0, swagger_1.ApiOperation)({ summary: "Listar endpoints" }),
+    (0, roles_decorator_1.Roles)("SUPERADMIN", "ADMIN"),
+    (0, idempotency_decorator_1.Idempotent)(idempotency_decorator_1.IDEMPOTENCY_FORBIDDEN),
+    (0, common_1.Get)("endpoints"),
     __param(0, (0, tenant_decorator_1.TenantId)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", Promise)
 ], WebhooksController.prototype, "listEndpoints", null);
 __decorate([
-    (0, swagger_1.ApiOperation)({ summary: 'Atualizar endpoint (If-Match)' }),
-    (0, swagger_1.ApiHeader)({ name: 'If-Match', required: false }),
-    (0, roles_decorator_1.Roles)('SUPERADMIN', 'ADMIN'),
-    (0, common_1.Patch)('endpoints/:id'),
+    (0, swagger_1.ApiOperation)({ summary: "Atualizar endpoint (If-Match)" }),
+    (0, swagger_1.ApiHeader)({ name: "If-Match", required: false }),
+    (0, roles_decorator_1.Roles)("SUPERADMIN", "ADMIN"),
+    (0, common_1.Patch)("endpoints/:id"),
     __param(0, (0, tenant_decorator_1.TenantId)()),
-    __param(1, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
+    __param(1, (0, common_1.Param)("id", new common_1.ParseUUIDPipe())),
     __param(2, (0, common_1.Body)()),
-    __param(3, (0, common_1.Headers)('if-match')),
+    __param(3, (0, common_1.Headers)("if-match")),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String, String, update_endpoint_dto_1.UpdateEndpointDto, String]),
     __metadata("design:returntype", Promise)
 ], WebhooksController.prototype, "patchEndpoint", null);
 __decorate([
-    (0, swagger_1.ApiOperation)({ summary: 'Rotacionar segredo (If-Match)' }),
-    (0, swagger_1.ApiHeader)({ name: 'If-Match', required: true }),
-    (0, roles_decorator_1.Roles)('SUPERADMIN', 'ADMIN'),
-    (0, common_1.Post)('endpoints/:id/rotate-secret'),
+    (0, swagger_1.ApiOperation)({ summary: "Rotacionar segredo (If-Match)" }),
+    (0, swagger_1.ApiHeader)({ name: "If-Match", required: true }),
+    (0, roles_decorator_1.Roles)("SUPERADMIN", "ADMIN"),
+    (0, common_1.Post)("endpoints/:id/rotate-secret"),
     __param(0, (0, tenant_decorator_1.TenantId)()),
-    __param(1, (0, common_1.Param)('id', new common_1.ParseUUIDPipe())),
-    __param(2, (0, common_1.Headers)('if-match')),
+    __param(1, (0, common_1.Param)("id", new common_1.ParseUUIDPipe())),
+    __param(2, (0, common_1.Headers)("if-match")),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [String, String, String]),
     __metadata("design:returntype", Promise)
 ], WebhooksController.prototype, "rotateSecret", null);
 __decorate([
-    (0, swagger_1.ApiOperation)({ summary: 'Replay por ids ou janela' }),
-    (0, roles_decorator_1.Roles)('SUPERADMIN', 'ADMIN'),
-    (0, idempotency_decorator_1.Idempotent)('webhooks:replay'),
-    (0, common_1.Post)('replay'),
+    (0, swagger_1.ApiOperation)({ summary: "Replay por ids ou janela" }),
+    (0, roles_decorator_1.Roles)("SUPERADMIN", "ADMIN"),
+    (0, idempotency_decorator_1.Idempotent)("webhooks:replay"),
+    (0, common_1.Post)("replay"),
     __param(0, (0, tenant_decorator_1.TenantId)()),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
@@ -111,9 +110,10 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], WebhooksController.prototype, "replay", null);
 __decorate([
-    (0, swagger_1.ApiOperation)({ summary: 'Listar entregas' }),
-    (0, roles_decorator_1.Roles)('SUPERADMIN', 'ADMIN'),
-    (0, common_1.Get)('deliveries'),
+    (0, swagger_1.ApiOperation)({ summary: "Listar entregas" }),
+    (0, roles_decorator_1.Roles)("SUPERADMIN", "ADMIN"),
+    (0, idempotency_decorator_1.Idempotent)(idempotency_decorator_1.IDEMPOTENCY_FORBIDDEN),
+    (0, common_1.Get)("deliveries"),
     __param(0, (0, tenant_decorator_1.TenantId)()),
     __param(1, (0, common_1.Query)()),
     __metadata("design:type", Function),
@@ -121,9 +121,8 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], WebhooksController.prototype, "listDeliveries", null);
 exports.WebhooksController = WebhooksController = __decorate([
-    (0, swagger_1.ApiTags)('webhooks'),
+    (0, swagger_1.ApiTags)("webhooks"),
     (0, swagger_1.ApiBearerAuth)(),
-    (0, common_1.UseGuards)(jwt_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard),
-    (0, common_1.Controller)('tenants/:tenantId/webhooks'),
+    (0, common_1.Controller)("tenants/:tenantId/webhooks"),
     __metadata("design:paramtypes", [webhooks_service_1.WebhooksService])
 ], WebhooksController);

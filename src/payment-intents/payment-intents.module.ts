@@ -1,7 +1,7 @@
-import { Module } from '@nestjs/common';
-import { PaymentIntentsController } from './payment-intents.controller';
-import { PaymentIntentsService } from './payment-intents.service';
-import { PrismaModule } from '../prisma/prisma.module';
+import { Module } from "@nestjs/common";
+import { PaymentIntentsController } from "./payment-intents.controller";
+import { PaymentIntentsService } from "./payment-intents.service";
+import { PrismaModule } from "../prisma/prisma.module";
 
 @Module({
   imports: [PrismaModule],

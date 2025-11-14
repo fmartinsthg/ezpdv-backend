@@ -1,3 +1,4 @@
+// src/orders/orders.controller.ts
 import {
   Controller,
   Post,
@@ -5,14 +6,12 @@ import {
   Body,
   Param,
   ParseUUIDPipe,
-  UseGuards,
   Headers,
   Query,
   ForbiddenException,
+  UseGuards, // ✅ ADICIONADO AQUI
 } from "@nestjs/common";
 import { OrdersService } from "./orders.service";
-import { JwtAuthGuard } from "../auth/jwt.guard";
-import { RolesGuard } from "../common/guards/roles.guard";
 import { Roles } from "../common/decorators/roles.decorator";
 import { CurrentUser } from "../auth/current-user.decorator";
 import { AuthUser } from "../auth/jwt.strategy";
@@ -38,7 +37,7 @@ import {
 } from "../common/idempotency/idempotency.decorator";
 import { presentOrder } from "./order.presenter";
 
-// ⬇️ novo
+// Guards específicos de caixa (método a método)
 import {
   RequireOpenCashSessionGuard,
   AllowWithoutCashSession,
@@ -46,7 +45,6 @@ import {
 
 @ApiTags("orders")
 @ApiBearerAuth()
-@UseGuards(JwtAuthGuard, RolesGuard) // TenantContext guard global já ativo
 @Controller("tenants/:tenantId/orders")
 export class OrdersController {
   constructor(private readonly ordersService: OrdersService) {}

@@ -20,15 +20,12 @@ const create_payment_dto_1 = require("./dto/create-payment.dto");
 const refund_payment_dto_1 = require("./dto/refund-payment.dto");
 const cancel_payment_dto_1 = require("./dto/cancel-payment.dto");
 const query_payments_dto_1 = require("./dto/query-payments.dto");
-const jwt_guard_1 = require("../auth/jwt.guard");
-const roles_guard_1 = require("../common/guards/roles.guard");
 const roles_decorator_1 = require("../common/decorators/roles.decorator");
 const current_user_decorator_1 = require("../auth/current-user.decorator");
 const tenant_decorator_1 = require("../common/tenant/tenant.decorator");
-const tenant_context_guard_1 = require("../common/tenant/tenant-context.guard");
 const payments_approval_guard_1 = require("./payments.approval.guard");
 const idempotency_decorator_1 = require("../common/idempotency/idempotency.decorator");
-// ⬇️ novo
+// Guards específicos de caixa nos métodos
 const require_open_cash_session_guard_1 = require("../cash/guards/require-open-cash-session.guard");
 let PaymentsController = class PaymentsController {
     constructor(payments) {
@@ -192,6 +189,5 @@ exports.PaymentsController = PaymentsController = __decorate([
     (0, swagger_1.ApiTags)("payments"),
     (0, swagger_1.ApiBearerAuth)(),
     (0, common_1.Controller)(),
-    (0, common_1.UseGuards)(jwt_guard_1.JwtAuthGuard, tenant_context_guard_1.TenantContextGuard, roles_guard_1.RolesGuard),
     __metadata("design:paramtypes", [payments_service_1.PaymentsService])
 ], PaymentsController);

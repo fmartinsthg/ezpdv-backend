@@ -25,14 +25,10 @@ import { RefundPaymentDto } from "./dto/refund-payment.dto";
 import { CancelPaymentDto } from "./dto/cancel-payment.dto";
 import { QueryPaymentsDto } from "./dto/query-payments.dto";
 
-import { JwtAuthGuard } from "../auth/jwt.guard";
-import { RolesGuard } from "../common/guards/roles.guard";
 import { Roles } from "../common/decorators/roles.decorator";
-
 import { CurrentUser } from "../auth/current-user.decorator";
 import { AuthUser } from "../auth/jwt.strategy";
 import { TenantId } from "../common/tenant/tenant.decorator";
-import { TenantContextGuard } from "../common/tenant/tenant-context.guard";
 
 import { PaymentsApprovalGuard } from "./payments.approval.guard";
 import {
@@ -40,7 +36,7 @@ import {
   IDEMPOTENCY_FORBIDDEN,
 } from "../common/idempotency/idempotency.decorator";
 
-// ⬇️ novo
+// Guards específicos de caixa nos métodos
 import {
   RequireOpenCashSessionGuard,
   AllowWithoutCashSession,
@@ -49,7 +45,6 @@ import {
 @ApiTags("payments")
 @ApiBearerAuth()
 @Controller()
-@UseGuards(JwtAuthGuard, TenantContextGuard, RolesGuard)
 export class PaymentsController {
   constructor(private readonly payments: PaymentsService) {}
 

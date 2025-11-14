@@ -22,10 +22,11 @@ const adjust_inventory_item_dto_1 = require("./dto/adjust-inventory-item.dto");
 const upsert_recipe_dto_1 = require("./dto/upsert-recipe.dto");
 const list_items_dto_1 = require("./dto/list-items.dto");
 const list_movements_dto_1 = require("./dto/list-movements.dto");
-const roles_decorator_1 = require("../auth/roles.decorator");
-const jwt_guard_1 = require("../auth/jwt.guard");
-const roles_guard_1 = require("../common/guards/roles.guard");
-const tenant_context_guard_1 = require("../common/tenant/tenant-context.guard");
+// ⬇️ padronizado
+const roles_decorator_1 = require("../common/decorators/roles.decorator");
+// Idempotência + Swagger
+const idempotency_decorator_1 = require("../common/idempotency/idempotency.decorator");
+const swagger_1 = require("@nestjs/swagger");
 let InventoryController = class InventoryController {
     constructor(inventory) {
         this.inventory = inventory;
@@ -57,6 +58,7 @@ let InventoryController = class InventoryController {
 };
 exports.InventoryController = InventoryController;
 __decorate([
+    (0, idempotency_decorator_1.Idempotent)(idempotency_decorator_1.IDEMPOTENCY_FORBIDDEN),
     (0, common_1.Get)("inventory/items"),
     __param(0, (0, common_1.Param)("tenantId")),
     __param(1, (0, common_1.Query)()),
@@ -65,8 +67,20 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], InventoryController.prototype, "listItems", null);
 __decorate([
-    (0, common_1.Post)("inventory/items"),
+    (0, swagger_1.ApiOperation)({ summary: "Criar item de inventário (idempotente)" }),
+    (0, swagger_1.ApiHeader)({
+        name: "Idempotency-Key",
+        required: true,
+        description: "UUID v4 por request",
+    }),
+    (0, swagger_1.ApiHeader)({
+        name: "Idempotency-Scope",
+        required: true,
+        description: "inventory:create-item",
+    }),
     (0, roles_decorator_1.Roles)("ADMIN", "MODERATOR"),
+    (0, idempotency_decorator_1.Idempotent)(["inventory:create-item", "inventory:items:create"]),
+    (0, common_1.Post)("inventory/items"),
     __param(0, (0, common_1.Param)("tenantId")),
     __param(1, (0, common_1.Body)()),
     __metadata("design:type", Function),
@@ -74,6 +88,7 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], InventoryController.prototype, "createItem", null);
 __decorate([
+    (0, idempotency_decorator_1.Idempotent)(idempotency_decorator_1.IDEMPOTENCY_FORBIDDEN),
     (0, common_1.Get)("inventory/items/:id"),
     __param(0, (0, common_1.Param)("tenantId")),
     __param(1, (0, common_1.Param)("id")),
@@ -82,8 +97,16 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], InventoryController.prototype, "getItem", null);
 __decorate([
-    (0, common_1.Patch)("inventory/items/:id"),
+    (0, swagger_1.ApiOperation)({ summary: "Atualizar item de inventário (idempotente)" }),
+    (0, swagger_1.ApiHeader)({ name: "Idempotency-Key", required: true }),
+    (0, swagger_1.ApiHeader)({
+        name: "Idempotency-Scope",
+        required: true,
+        description: "inventory:update-item",
+    }),
     (0, roles_decorator_1.Roles)("ADMIN", "MODERATOR"),
+    (0, idempotency_decorator_1.Idempotent)(["inventory:update-item", "inventory:items:update"]),
+    (0, common_1.Patch)("inventory/items/:id"),
     __param(0, (0, common_1.Param)("tenantId")),
     __param(1, (0, common_1.Param)("id")),
     __param(2, (0, common_1.Body)()),
@@ -92,8 +115,16 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], InventoryController.prototype, "updateItem", null);
 __decorate([
-    (0, common_1.Post)("inventory/items/:id/adjust"),
+    (0, swagger_1.ApiOperation)({ summary: "Ajustar saldo de item (idempotente)" }),
+    (0, swagger_1.ApiHeader)({ name: "Idempotency-Key", required: true }),
+    (0, swagger_1.ApiHeader)({
+        name: "Idempotency-Scope",
+        required: true,
+        description: "inventory:adjust-item",
+    }),
     (0, roles_decorator_1.Roles)("ADMIN", "MODERATOR"),
+    (0, idempotency_decorator_1.Idempotent)(["inventory:adjust-item", "inventory:items:adjust"]),
+    (0, common_1.Post)("inventory/items/:id/adjust"),
     __param(0, (0, common_1.Param)("tenantId")),
     __param(1, (0, common_1.Param)("id")),
     __param(2, (0, common_1.Body)()),
@@ -102,6 +133,7 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], InventoryController.prototype, "adjustItem", null);
 __decorate([
+    (0, idempotency_decorator_1.Idempotent)(idempotency_decorator_1.IDEMPOTENCY_FORBIDDEN),
     (0, common_1.Get)("recipes/:productId"),
     __param(0, (0, common_1.Param)("tenantId")),
     __param(1, (0, common_1.Param)("productId")),
@@ -110,8 +142,16 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], InventoryController.prototype, "getRecipe", null);
 __decorate([
-    (0, common_1.Put)("recipes/:productId"),
+    (0, swagger_1.ApiOperation)({ summary: "Upsert de receita (idempotente)" }),
+    (0, swagger_1.ApiHeader)({ name: "Idempotency-Key", required: true }),
+    (0, swagger_1.ApiHeader)({
+        name: "Idempotency-Scope",
+        required: true,
+        description: "inventory:upsert-recipe",
+    }),
     (0, roles_decorator_1.Roles)("ADMIN", "MODERATOR"),
+    (0, idempotency_decorator_1.Idempotent)(["inventory:upsert-recipe", "inventory:recipes:upsert"]),
+    (0, common_1.Put)("recipes/:productId"),
     __param(0, (0, common_1.Param)("tenantId")),
     __param(1, (0, common_1.Param)("productId")),
     __param(2, (0, common_1.Body)()),
@@ -120,6 +160,7 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], InventoryController.prototype, "upsertRecipe", null);
 __decorate([
+    (0, idempotency_decorator_1.Idempotent)(idempotency_decorator_1.IDEMPOTENCY_FORBIDDEN),
     (0, common_1.Get)("inventory/movements"),
     __param(0, (0, common_1.Param)("tenantId")),
     __param(1, (0, common_1.Query)()),
@@ -128,7 +169,8 @@ __decorate([
     __metadata("design:returntype", Promise)
 ], InventoryController.prototype, "listMovements", null);
 exports.InventoryController = InventoryController = __decorate([
-    (0, common_1.UseGuards)(jwt_guard_1.JwtAuthGuard, roles_guard_1.RolesGuard, tenant_context_guard_1.TenantContextGuard),
+    (0, swagger_1.ApiTags)("inventory"),
+    (0, swagger_1.ApiBearerAuth)(),
     (0, common_1.Controller)("tenants/:tenantId"),
     __metadata("design:paramtypes", [inventory_service_1.InventoryService])
 ], InventoryController);

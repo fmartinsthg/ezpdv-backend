@@ -22,9 +22,10 @@ import { CreatePaymentDto } from "./dto/create-payment.dto";
 import { RefundPaymentDto } from "./dto/refund-payment.dto";
 import { CancelPaymentDto } from "./dto/cancel-payment.dto";
 import { WebhooksService } from "../webhooks/webhooks.service";
-
-// 🔽 Integração com o módulo de Caixa
 import { CashService } from "../cash/cash.service";
+
+// 🔽 NOVO: Integra com Intents para fechar ciclo automaticamente
+import { PaymentIntentsService } from "../payment-intents/payment-intents.service";
 
 @Injectable()
 export class PaymentsService {
@@ -32,7 +33,9 @@ export class PaymentsService {
     private readonly prisma: PrismaService,
     @Inject(PAYMENT_GATEWAY) private readonly gateway: PaymentGateway,
     private readonly webhooks: WebhooksService,
-    private readonly cash: CashService
+    private readonly cash: CashService,
+    // 🔽 NOVO: injeta o serviço de intents
+    private readonly intents: PaymentIntentsService
   ) {}
 
   /** Quantiza valor monetário para 2 casas decimais (consistência). */
@@ -308,6 +311,9 @@ export class PaymentsService {
           });
         }
 
+        // ✅ NOVO: garante que um Intent OPEN (se existir) seja completado
+        await this.intents.tryCompleteIntentForOrder(tx, tenantId, orderId);
+
         return {
           payment,
           summary: {
@@ -511,6 +517,13 @@ export class PaymentsService {
         });
       }
 
+      // ✅ NOVO: após reembolso, reavalia o Intent OPEN
+      await this.intents.tryCompleteIntentForOrder(
+        tx,
+        tenantId,
+        payment.orderId
+      );
+
       const updated = await tx.payment.findUnique({
         where: { id: payment.id },
       });
@@ -594,6 +607,13 @@ export class PaymentsService {
           reason: dto.reason ?? "cancel",
         },
       });
+
+      // ✅ NOVO: um cancel PENDING não altera captura, mas garantimos consistência
+      await this.intents.tryCompleteIntentForOrder(
+        tx,
+        tenantId,
+        payment.orderId
+      );
 
       return up;
     });

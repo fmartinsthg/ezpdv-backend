@@ -10,30 +10,30 @@ exports.PaymentsModule = void 0;
 const common_1 = require("@nestjs/common");
 const payments_controller_1 = require("./payments.controller");
 const payments_service_1 = require("./payments.service");
-const prisma_service_1 = require("../prisma/prisma.service");
-// ❌ REMOVIDO: import { JwtService } from "@nestjs/jwt";
 const payments_approval_guard_1 = require("./payments.approval.guard");
 const null_gateway_1 = require("./gateway/null.gateway");
 const payment_gateway_interface_1 = require("./gateway/payment-gateway.interface");
+const prisma_module_1 = require("../prisma/prisma.module");
 const idempotency_module_1 = require("../common/idempotency/idempotency.module");
 const webhooks_module_1 = require("../webhooks/webhooks.module");
 const auth_module_1 = require("../auth/auth.module");
-// necessário para injetar CashService no PaymentsService
 const cash_module_1 = require("../cash/cash.module");
+const payment_intents_module_1 = require("../payment-intents/payment-intents.module");
 let PaymentsModule = class PaymentsModule {
 };
 exports.PaymentsModule = PaymentsModule;
 exports.PaymentsModule = PaymentsModule = __decorate([
     (0, common_1.Module)({
         imports: [
-            auth_module_1.AuthModule, // -> JwtService e guards vêm daqui
+            auth_module_1.AuthModule,
+            prisma_module_1.PrismaModule,
             webhooks_module_1.WebhooksModule,
             idempotency_module_1.IdempotencyModule,
-            cash_module_1.CashModule, // -> expõe CashService
+            cash_module_1.CashModule,
+            payment_intents_module_1.PaymentIntentsModule,
         ],
         controllers: [payments_controller_1.PaymentsController],
         providers: [
-            prisma_service_1.PrismaService,
             payments_service_1.PaymentsService,
             payments_approval_guard_1.PaymentsApprovalGuard,
             {
