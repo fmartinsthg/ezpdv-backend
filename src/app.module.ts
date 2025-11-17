@@ -37,6 +37,7 @@ import { KdsModule } from "./kds/kds.module";
 import { WebhooksModule } from "./webhooks/webhooks.module";
 import { CashModule } from "./cash/cash.module";
 import { InventoryModule } from "./inventory/inventory.module";
+import { PaymentsFacadeModule } from "./payments-facade/payments-facade.module";
 
 @Module({
   imports: [
@@ -59,6 +60,7 @@ import { InventoryModule } from "./inventory/inventory.module";
     WebhooksModule,
     PlatformModule,
     InventoryModule,
+    PaymentsFacadeModule,
   ],
   controllers: [AppController],
   providers: [

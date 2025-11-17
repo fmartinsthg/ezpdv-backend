@@ -60,6 +60,7 @@ exports.AppModule = AppModule = __decorate([
             webhooks_module_1.WebhooksModule,
             platform_module_1.PlatformModule,
             inventory_module_1.InventoryModule,
+            PaymentsFacadeModule,
         ],
         controllers: [app_controller_1.AppController],
         providers: [
